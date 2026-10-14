@@ -1,4 +1,5 @@
 import { chromium } from "playwright-core";
+import { USER_AGENT_SCRIPT } from "./pageScripts.ts";
 import type { BrowserProvider, BrowserSession, ViewportSpec } from "./provider.ts";
 
 export class BrowserlessProvider implements BrowserProvider {
@@ -29,7 +30,7 @@ export class BrowserlessProvider implements BrowserProvider {
           ...(viewport.userAgent ? { userAgent: viewport.userAgent } : {}),
         });
         const page = await context.newPage();
-        const userAgent = await page.evaluate(() => navigator.userAgent);
+        const userAgent = await page.evaluate<string>(USER_AGENT_SCRIPT);
         return { page, userAgent, close: () => context.close().catch(() => undefined) };
       },
       async close() {

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { errors, type Page } from "playwright-core";
+import { PAGE_LINKS_SCRIPT, PAGE_SIGNALS_SCRIPT, PAGE_TEXT_SCRIPT, SCROLL_THROUGH_SCRIPT } from "./browser/pageScripts.ts";
 import type { PageLink } from "./discovery.ts";
 
 export type AccessStatus =
@@ -56,14 +57,7 @@ async function settle(page: Page): Promise<void> {
 }
 
 async function scrollThrough(page: Page): Promise<void> {
-  await page.evaluate(async () => {
-    const step = window.innerHeight;
-    for (let i = 0; i < 8 && window.scrollY + step < document.body.scrollHeight; i++) {
-      window.scrollBy(0, step);
-      await new Promise((r) => setTimeout(r, 250));
-    }
-    window.scrollTo(0, 0);
-  });
+  await page.evaluate(SCROLL_THROUGH_SCRIPT);
   await page.waitForTimeout(500);
 }
 
@@ -96,54 +90,13 @@ export async function capturePage(page: Page, url: string, timeoutMs: number): P
     base.finalUrl = page.url();
     base.title = await page.title();
 
-    const fullText = await page.evaluate(() => document.body?.innerText ?? "");
+    const fullText = await page.evaluate<string>(PAGE_TEXT_SCRIPT);
     base.text = fullText.slice(0, TEXT_LIMIT);
     base.textLength = fullText.length;
     base.contentHash = createHash("sha256").update(fullText).digest("hex");
 
-    base.signals = await page.evaluate(() => {
-      const types: string[] = [];
-      document.querySelectorAll('script[type="application/ld+json"]').forEach((el) => {
-        try {
-          const collect = (node: unknown): void => {
-            if (Array.isArray(node)) return node.forEach(collect);
-            if (node && typeof node === "object") {
-              const t = (node as Record<string, unknown>)["@type"];
-              if (typeof t === "string") types.push(t);
-              if (Array.isArray(t)) t.forEach((x) => typeof x === "string" && types.push(x));
-              const graph = (node as Record<string, unknown>)["@graph"];
-              if (graph) collect(graph);
-            }
-          };
-          collect(JSON.parse(el.textContent ?? ""));
-        } catch {
-          /* malformed JSON-LD is ignored */
-        }
-      });
-      const isVisible = (el: Element) => {
-        const r = (el as HTMLElement).getBoundingClientRect();
-        const s = getComputedStyle(el);
-        return r.width > 0 && r.height > 0 && s.visibility !== "hidden" && s.display !== "none";
-      };
-      const addToCart = [...document.querySelectorAll("button, input[type=submit], a")].some(
-        (el) => /add to (cart|bag)/i.test((el as HTMLElement).innerText || (el as HTMLInputElement).value || "") && isVisible(el),
-      );
-      const dialogs = [...document.querySelectorAll('[role="dialog"], [aria-modal="true"], dialog[open]')].filter(isVisible);
-      return {
-        jsonLdTypes: [...new Set(types)],
-        ogType: document.querySelector('meta[property="og:type"]')?.getAttribute("content") ?? null,
-        addToCartControlVisible: addToCart,
-        visibleDialogCount: dialogs.length,
-      };
-    });
-
-    base.links = await page.evaluate(() =>
-      [...document.querySelectorAll("a[href]")].map((a) => ({
-        href: (a as HTMLAnchorElement).href,
-        text: ((a as HTMLElement).innerText || a.getAttribute("aria-label") || "").trim().slice(0, 120),
-        inNav: !!a.closest("nav, header, [role=navigation]"),
-      })),
-    );
+    base.signals = await page.evaluate<PageSignals>(PAGE_SIGNALS_SCRIPT);
+    base.links = await page.evaluate<PageLink[]>(PAGE_LINKS_SCRIPT);
 
     // Above-the-fold first, before any scrolling changes what is shown.
     base.viewportPng = await page.screenshot({ type: "png", timeout: 15_000 });

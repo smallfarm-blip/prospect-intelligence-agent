@@ -1,0 +1,26 @@
+{
+  "description": "Phase 0 spike targets. Chosen for capture feasibility across three categories; ICP fit (revenue, team size) has NOT been assessed. Fallback URLs are used only if automatic discovery fails and must stay empty unless discovery has been shown to fail.",
+  "sites": [
+    {
+      "name": "Taylor Stitch",
+      "domain": "taylorstitch.com",
+      "category": "apparel",
+      "geography": "US",
+      "fallback": { "plp": null, "pdps": [] }
+    },
+    {
+      "name": "Kosas",
+      "domain": "kosas.com",
+      "category": "beauty",
+      "geography": "US",
+      "fallback": { "plp": null, "pdps": [] }
+    },
+    {
+      "name": "Parachute Home",
+      "domain": "parachutehome.com",
+      "category": "home_goods",
+      "geography": "US",
+      "fallback": { "plp": null, "pdps": [] }
+    }
+  ]
+}

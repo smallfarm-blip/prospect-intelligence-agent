@@ -1,0 +1,24 @@
+{
+  "name": "prospect-research-worker",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "External evidence-collection worker (Phase 0 spike). Runs outside Bolt hosting.",
+  "engines": {
+    "node": ">=20.6"
+  },
+  "scripts": {
+    "collect": "tsx --env-file=.env src/index.ts",
+    "test": "tsx --test tests/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.57.4",
+    "playwright-core": "1.64.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.23.15",
+    "typescript": "^5.5.3"
+  }
+}

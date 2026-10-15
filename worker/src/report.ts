@@ -81,6 +81,9 @@ export function writeReports(input: RunReportInput): { jsonPath: string; mdPath:
           title: e.page_title,
           screenshotPath: e.screenshot_path,
           fullPageScreenshotPath: e.full_page_screenshot_path,
+          unobstructedScreenshotPath: e.unobstructed_screenshot_path,
+          overlayDismissalStatus: e.overlay_dismissal_status,
+          captureStates: e.capture_states,
           discoveryMethod: e.discovery_method,
           signals: e.page_type_signals,
           notes: e.navigation_notes,
@@ -99,6 +102,26 @@ export function writeReports(input: RunReportInput): { jsonPath: string; mdPath:
 
 function cell(text: string | null | undefined): string {
   return (text ?? "").replace(/\|/g, "\\|").replace(/\n/g, " ");
+}
+
+function link(urls: Map<string, string>, path: string | null, text: string): string {
+  if (!path) return "";
+  const url = urls.get(path);
+  return url ? `[${text}](${url})` : `${text} (stored)`;
+}
+
+function overlayLines(e: StoredEvidence): string[] {
+  const after = e.capture_states?.find((s) => s.state === "after_overlay_dismissal");
+  const initial = e.capture_states?.find((s) => s.state === "initial_viewport");
+  if (!after || !initial || e.overlay_dismissal_status === "none_detected") return [];
+  const lines = [`- **${e.page_slot} / ${e.viewport_name}**: ${e.overlay_dismissal_status}; ${initial.overlays_visible.length} overlay(s) in the initial viewport`];
+  for (const a of after.actions ?? []) {
+    const how = a.control ? `${a.method} "${a.control.label}" (${a.control.intent})` : "no action";
+    lines.push(`  - ${a.overlay.kind} "${cell(a.overlay.label.slice(0, 60))}" (${a.firstSeen}): ${how} -> ${a.outcome}. ${cell(a.detail)}`);
+  }
+  for (const o of after.overlays_visible) lines.push(`  - still visible: ${o.kind} "${cell(o.label.slice(0, 60))}"`);
+  if (after.error) lines.push(`  - error: ${cell(after.error)}`);
+  return lines;
 }
 
 function renderMarkdown(input: RunReportInput, cost: ReturnType<typeof buildCostSummary>): string {
@@ -137,7 +160,7 @@ function renderMarkdown(input: RunReportInput, cost: ReturnType<typeof buildCost
   for (const site of input.sites) {
     const rows = input.evidence.filter((e) => e.company_id === site.companyId);
     out.push("", `## ${site.name} (${site.domain}, ${site.category})`, "", `robots.txt: ${site.robots}`, "");
-    out.push("| Slot | Viewport | Status | HTTP | URL | Screenshot | Notes |", "|---|---|---|---|---|---|---|");
+    out.push("| Slot | Viewport | Status | HTTP | URL | Screenshots | Overlays | Notes |", "|---|---|---|---|---|---|---|---|");
     const order = (slot: string) => {
       const i = (REQUIRED_SLOTS as readonly string[]).indexOf(slot);
       return i === -1 ? 99 : i;
@@ -151,17 +174,20 @@ function renderMarkdown(input: RunReportInput, cost: ReturnType<typeof buildCost
     for (const e of sorted) {
       const shot = e.screenshot_path
         ? [
-            input.signedUrls.get(e.screenshot_path) ? `[view](${input.signedUrls.get(e.screenshot_path)})` : "stored",
-            e.full_page_screenshot_path && input.signedUrls.get(e.full_page_screenshot_path) ? `[full](${input.signedUrls.get(e.full_page_screenshot_path)})` : "",
+            link(input.signedUrls, e.screenshot_path, "initial"),
+            link(input.signedUrls, e.unobstructed_screenshot_path, "after dismissal"),
+            link(input.signedUrls, e.full_page_screenshot_path, "full"),
           ]
             .filter(Boolean)
             .join(" ")
         : "-";
       const notes = [e.navigation_notes, e.error_message, (e.page_type_signals as { blockReason?: string }).blockReason].filter(Boolean).join(" | ");
       out.push(
-        `| ${e.page_slot} | ${e.viewport_name} ${e.viewport_width}x${e.viewport_height} | ${e.access_status} | ${e.http_status ?? "-"} | ${cell(e.final_url ?? e.requested_url ?? "-")} | ${shot} | ${cell(notes)} |`,
+        `| ${e.page_slot} | ${e.viewport_name} ${e.viewport_width}x${e.viewport_height} | ${e.access_status} | ${e.http_status ?? "-"} | ${cell(e.final_url ?? e.requested_url ?? "-")} | ${shot} | ${e.overlay_dismissal_status ?? "-"} | ${cell(notes)} |`,
       );
     }
+    const overlays = sorted.flatMap(overlayLines);
+    if (overlays.length) out.push("", `### Overlays`, "", "Detected from the first-visit viewport. The initial screenshot is untouched; the after-dismissal screenshot was taken only after pressing each overlay's own visible control.", "", ...overlays);
   }
   out.push("", "Screenshot links are signed and expire after 7 days. Local copies are in the `screenshots/` folder next to this report.", "");
   return out.join("\n");

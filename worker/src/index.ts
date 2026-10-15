@@ -97,7 +97,7 @@ async function main(): Promise<number> {
 
   const signedUrls = new Map<string, string>();
   for (const e of evidence) {
-    for (const path of [e.screenshot_path, e.full_page_screenshot_path]) {
+    for (const path of [e.screenshot_path, e.unobstructed_screenshot_path, e.full_page_screenshot_path]) {
       if (!path) continue;
       const url = await store.signedUrl(path, SIGNED_URL_SECONDS);
       if (url) signedUrls.set(path, url);

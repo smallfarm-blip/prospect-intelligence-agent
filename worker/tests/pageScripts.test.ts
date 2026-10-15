@@ -108,6 +108,167 @@ test("the tsx runtime does inject __name into nested named functions (why script
   assert.throws(() => run(`(${transpiled.toString()})()`, context), /__name is not defined/);
 });
 
+interface NodeSpec {
+  tag: string;
+  attrs?: Record<string, string>;
+  text?: string;
+  position?: string;
+  display?: string;
+  z?: number;
+  rect?: [number, number, number, number];
+  children?: NodeSpec[];
+}
+
+/** Minimal DOM: enough layout, styles and hit testing for the overlay scan to run unmodified. */
+function fakeOverlayPage(tree: NodeSpec[], vw: number, vh: number, hostname = "shop.test") {
+  const all: any[] = [];
+  const build = (spec: NodeSpec, parent: any): any => {
+    const node: any = {
+      tagName: spec.tag.toUpperCase(),
+      id: spec.attrs?.id ?? "",
+      className: spec.attrs?.class ?? "",
+      parent,
+      style: { position: spec.position ?? "static", display: spec.display ?? "block", visibility: "visible", opacity: "1" },
+      getAttribute: (n: string) => spec.attrs?.[n] ?? null,
+      get innerText(): string {
+        return [spec.text ?? "", ...node.children.map((c: any) => c.innerText)].filter(Boolean).join(" ");
+      },
+      get z(): number {
+        return spec.z ?? parent?.z ?? 0;
+      },
+      getBoundingClientRect() {
+        const [x, y, w, h] = spec.rect ?? [0, 0, 0, 0];
+        return { left: x, top: y, right: x + w, bottom: y + h, width: w, height: h };
+      },
+      descendants(): any[] {
+        return node.children.flatMap((c: any) => [c, ...c.descendants()]);
+      },
+      contains(other: any) {
+        for (let n = other; n; n = n.parent) if (n === node) return true;
+        return false;
+      },
+      getElementsByTagName: (t: string) => node.descendants().filter((d: any) => t === "*" || d.tagName === t.toUpperCase()),
+      querySelectorAll(sel: string) {
+        if (sel === "*") return node.descendants();
+        return node.descendants().filter(
+          (d: any) =>
+            ["BUTTON", "A"].includes(d.tagName) ||
+            d.getAttribute("role") === "button" ||
+            d.getAttribute("aria-label") !== null ||
+            (d.tagName === "INPUT" && ["button", "submit"].includes(d.getAttribute("type"))),
+        );
+      },
+    };
+    all.push(node);
+    node.children = (spec.children ?? []).map((c) => build(c, node));
+    return node;
+  };
+  const body = build({ tag: "body", rect: [0, 0, vw, vh], children: tree }, null);
+  const document = {
+    body,
+    elementFromPoint(x: number, y: number) {
+      let best: any = null;
+      for (const n of all) {
+        const r = n.getBoundingClientRect();
+        if (n.style.display === "none" || x < r.left || x >= r.right || y < r.top || y >= r.bottom) continue;
+        if (!best || n.z >= best.z) best = n;
+      }
+      return best;
+    },
+  };
+  return vm.createContext({
+    window: { innerWidth: vw, innerHeight: vh },
+    document,
+    location: { hostname },
+    getComputedStyle: (el: any) => el.style,
+  });
+}
+
+test("overlay scan finds stacked consent and promo overlays without touching the page", () => {
+  const ctx = fakeOverlayPage(
+    [
+      { tag: "header", position: "sticky", rect: [0, 0, 390, 60], text: "Shop Menu" },
+      { tag: "main", rect: [0, 60, 390, 2000], text: "Product details" },
+      { tag: "div", position: "fixed", display: "none", rect: [0, 0, 390, 844], text: "Subscribe to our newsletter" },
+      { tag: "iframe", position: "fixed", rect: [320, 770, 60, 60], attrs: { title: "Chat" } },
+      {
+        tag: "div",
+        attrs: { id: "onetrust-banner-sdk" },
+        position: "fixed",
+        z: 5,
+        rect: [0, 644, 390, 200],
+        text: "We use cookies to improve your experience.",
+        children: [
+          { tag: "button", text: "Cookie Settings", rect: [10, 700, 120, 40] },
+          { tag: "button", text: "Reject All", rect: [140, 700, 110, 40] },
+          { tag: "button", text: "Accept All", rect: [260, 700, 120, 40] },
+        ],
+      },
+      {
+        tag: "div",
+        attrs: { role: "dialog", "aria-modal": "true" },
+        position: "fixed",
+        z: 10,
+        rect: [0, 0, 390, 844],
+        text: "Get 15% off your first order",
+        children: [
+          { tag: "input", attrs: { type: "email", placeholder: "Email" }, rect: [20, 300, 350, 48] },
+          { tag: "button", text: "Sign up", rect: [20, 360, 350, 48] },
+          { tag: "button", text: "No, thanks", rect: [20, 420, 350, 40] },
+          { tag: "button", text: "×", attrs: { "aria-label": "Close dialog" }, rect: [340, 10, 40, 40] },
+        ],
+      },
+    ],
+    390,
+    844,
+  );
+  assert.equal(vm.runInContext("typeof __name", ctx), "undefined");
+  const result = JSON.parse(JSON.stringify(vm.runInContext(scripts.OVERLAY_SCAN_PAGE_SCRIPT, ctx)));
+
+  assert.deepEqual(result.viewport, { width: 390, height: 844 });
+  assert.deepEqual(
+    result.overlays.map((o: any) => [o.kind, o.tag, o.coverage]),
+    [
+      ["consent", "div", 0.237],
+      ["promotional", "div", 1],
+    ],
+  );
+  const [consent, promo] = result.overlays;
+  assert.match(consent.label, /We use cookies/);
+  assert.deepEqual(
+    consent.controls.map((c: any) => [c.label, c.intent, c.hitTestOk]),
+    [
+      ["Reject All", "decline", false],
+      ["Accept All", "accept", false],
+    ],
+    "consent buttons are found but recorded as covered by the promo modal; settings is not a dismiss control",
+  );
+  assert.deepEqual(
+    promo.controls.map((c: any) => [c.label, c.intent, c.hitTestOk, c.x, c.y]),
+    [
+      ["No, thanks", "decline", true, 195, 440],
+      ["×", "close", true, 360, 30],
+    ],
+    "sign-up is never treated as a dismiss control",
+  );
+});
+
+test("overlay frame scan classifies an SMS sign-up iframe and lists its close control", () => {
+  const ctx = fakeOverlayPage(
+    [
+      { tag: "p", text: "Text me 20% off", rect: [0, 0, 300, 40] },
+      { tag: "button", attrs: { "aria-label": "Dismiss this popup" }, rect: [270, 0, 30, 30] },
+    ],
+    300,
+    500,
+    "creatives.attn.tv",
+  );
+  const result = JSON.parse(JSON.stringify(vm.runInContext(scripts.OVERLAY_SCAN_FRAME_SCRIPT, ctx)));
+  assert.equal(result.kind, "promotional");
+  assert.match(result.label, /20% off/);
+  assert.deepEqual(result.controls.map((c: any) => [c.label, c.intent, c.hitTestOk]), [["Dismiss this popup", "close", true]]);
+});
+
 test("no source file passes a TypeScript function to page.evaluate", () => {
   const offenders: string[] = [];
   const walk = (dir: string): void => {

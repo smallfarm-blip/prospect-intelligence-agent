@@ -22,12 +22,50 @@ scheduling, and nothing in its output should be read as a judgement about a site
 5. One Browserless session is used per page, covering both viewports. It is opened only if the
    worst-case cost still fits under the run ceiling.
 6. Each viewport capture is written to `page_evidence` and stored in a private bucket
-   (`evidence-screenshots`): viewport PNG, full-page JPEG, URL, final URL, timestamp, HTTP status, title,
-   visible text (first 20k chars + SHA-256 of the full text), and page-type signals.
+   (`evidence-screenshots`): two viewport PNGs (see "Capture states" below), full-page JPEG, URL, final URL,
+   timestamp, HTTP status, title, visible text (first 20k chars + SHA-256 of the full text), and page-type signals.
 7. Verifies the stored evidence, then writes `output/<run-id>/report.md` and `report.json`.
 
 Sites that block automated access are recorded as `blocked` with the reason. The worker does not try
 to get around blocks, CAPTCHAs or `robots.txt` rules.
+
+## Capture states (overlays)
+
+Every captured page, at both desktop and mobile, is recorded in two states so the analysis can separate
+first-visit friction from the underlying shopping experience:
+
+| State | File | What it shows |
+| --- | --- | --- |
+| `initial_viewport` | `<slot>-<viewport>.png` (`screenshot_path`) | Exactly what a first-time visitor sees after load, overlays included. Taken before any interaction and never modified. |
+| `after_overlay_dismissal` | `<slot>-<viewport>-unobstructed.png` (`unobstructed_screenshot_path`) | The same viewport after the worker tried to close consent and promotional overlays. |
+
+The full-page JPEG is taken after the dismissal attempt (`page_type_signals.fullPageState`).
+
+How dismissal works:
+
+- A read-only scan finds fixed, sticky or dialog layers in the viewport (including sign-up iframes such as
+  SMS pop-ups) and classifies them as `consent`, `promotional` or `other`.
+- Only real, visible controls are used, pressed with a real click (desktop) or tap (mobile) at the control's
+  position. A control is pressed only if it is actually on top at that point; if another layer covers it,
+  it is recorded as `control_obscured` and left alone.
+- Order of preference: for consent, decline / reject, then close, and accept only as a last resort; for
+  promotions, close, then "no thanks". Sign-up, subscribe, settings and similar buttons are never pressed.
+- Nothing is hidden or removed with CSS or scripts, and no access restriction is bypassed.
+- Each overlay gets one attempt. If a control loads a different page, the worker stops and records
+  `navigated_away` (no unobstructed screenshot exists in that case).
+
+Stored in `page_evidence`:
+
+- `overlay_dismissal_status`: `none_detected`, `all_dismissed`, `partially_dismissed`, `not_dismissed`,
+  `navigated_away` or `error`.
+- `capture_states`: a list of exactly two entries, `initial_viewport` first. Each lists its screenshot, timestamp
+  and the overlays visible in it. The second also lists every action: which overlay, whether it was there at
+  first or appeared later, which control was pressed and how, and the outcome (`dismissed`, `still_visible`,
+  `navigated_away`, `control_obscured`, `no_dismiss_control_found`, `attempt_limit_reached`).
+
+The report shows both screenshots per page and an "Overlays" section per site. Overlays that could not be
+closed are listed as review warnings. Dismissal adds a few seconds per viewport to session time (and so to
+the cost estimate).
 
 ## Selected test sites
 
@@ -120,7 +158,8 @@ Each run writes to `worker/output/<run-id>/`:
 
 - `report.md` — human-readable summary:
   - coverage per site (captured / 8 required);
-  - a per-page table with status, final URL, HTTP code and notes;
+  - a per-page table with status, final URL, HTTP code, overlay dismissal status and notes;
+  - an "Overlays" section per site describing each dismissal action;
   - verification checks and warnings;
   - the cost section;
   - links to every screenshot. Links are signed and expire after 7 days.
@@ -133,7 +172,8 @@ The same data is in Supabase:
 - `research_runs` — one row per run: status, cost estimate, summary, errors.
 - `research_jobs` — one row per site per run.
 - `page_evidence` — one row per page per viewport. Filter by `research_run_id` to compare runs.
-- Storage bucket `evidence-screenshots` — files under `<run-id>/<domain>/<slot>-<viewport>.png`.
+- Storage bucket `evidence-screenshots` — files under `<run-id>/<domain>/<slot>-<viewport>.png`, plus
+  `-unobstructed.png` and `-full.jpg` variants.
 
 ### Status meanings
 
@@ -155,15 +195,18 @@ Run statuses: `completed` (all 24 captures plus all checks passed), `completed_w
 
 ### Verification checks
 
-The report runs four integrity checks:
+The report runs five integrity checks:
 
 1. Every capture has URL, timestamp, viewport, screenshot, text hash and user agent.
-2. Every screenshot file exists in storage.
+2. Every screenshot file exists in storage (initial, after-dismissal and full-page).
 3. Every non-capture records why.
 4. Each site has exactly one record per required page and viewport.
+5. Every capture records both states, `initial_viewport` first and pointing at the original screenshot, plus
+   a dismissal status and an after-dismissal screenshot (unless the control navigated away or dismissal errored).
 
-It also warns about off-site redirects and about product pages that were identified by URL only (no product
-markup or add-to-cart control detected). These checks confirm the evidence is complete and traceable. They
+It also warns about off-site redirects, about product pages that were identified by URL only (no product
+markup or add-to-cart control detected), and about overlays still visible after the dismissal attempt,
+controls that navigated away, and dismissal errors. These checks confirm the evidence is complete and traceable. They
 do **not** confirm what the pages show; review the screenshots yourself.
 
 ## Reading the cost report
@@ -193,5 +236,10 @@ duration and converts it with that rule:
 - Block detection is heuristic. A site could serve a soft block that looks like real content; the
   screenshots are the ground truth.
 - Mobile emulation uses viewport, touch and user agent in desktop Chromium. It is not a real iOS device.
-- Cookie banners and pop-ups are left in place (counted in `visibleDialogCount`), not dismissed.
+- Overlay detection is heuristic (position, dialog roles, wording and known vendor names). An unusual overlay may
+  be missed (`none_detected` does not mean the page had none; check the initial screenshot), and a
+  non-overlay sticky element could occasionally be listed. Overlays inside closed shadow DOM or cross-origin
+  iframes that don't respond in time can't be inspected.
+- Accepting cookies (last resort) can change what loads afterwards, such as personalisation or tracking scripts;
+  the action is recorded so the after state can be read with that in mind.
 - One worker process at a time is the tested configuration, although job claiming is safe for several.

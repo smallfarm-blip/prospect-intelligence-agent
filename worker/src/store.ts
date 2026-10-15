@@ -1,6 +1,7 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { SiteConfig } from "./config.ts";
 import type { AccessStatus, PageSignals } from "./capture.ts";
+import type { CaptureState, DismissalStatus } from "./overlays.ts";
 
 export const SCREENSHOT_BUCKET = "evidence-screenshots";
 export const COLLECT_STAGE = "collect_pages";
@@ -23,6 +24,9 @@ export interface EvidenceRow {
   page_title: string | null;
   screenshot_path: string | null;
   full_page_screenshot_path: string | null;
+  unobstructed_screenshot_path: string | null;
+  overlay_dismissal_status: DismissalStatus | null;
+  capture_states: CaptureState[];
   extracted_text: string | null;
   extracted_text_length: number | null;
   content_hash: string | null;
@@ -65,6 +69,10 @@ export class EvidenceStore {
   async preflight(): Promise<void> {
     check(await this.db.from("research_runs").select("id").limit(1), "Database access check (is the secret key correct?)");
     check(await this.db.storage.from(SCREENSHOT_BUCKET).list("", { limit: 1 }), "Screenshot storage access check");
+    check(
+      await this.db.from("page_evidence").select("unobstructed_screenshot_path, overlay_dismissal_status, capture_states").limit(1),
+      "Database schema check (apply the add_overlay_capture_states_to_page_evidence migration)",
+    );
   }
 
   async reclaimStaleJobs(minutes: number): Promise<number> {

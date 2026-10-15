@@ -7,6 +7,7 @@ import type { SiteConfig } from "./config.ts";
 import type { CostTracker } from "./cost.ts";
 import { pickContrastingPdps, productLinks, rankPlpCandidates, type PageLink } from "./discovery.ts";
 import type { Logger } from "./logger.ts";
+import { buildCaptureStates } from "./overlays.ts";
 import type { DomainRateLimiter } from "./rateLimiter.ts";
 import { isPathAllowed, type RobotsRules } from "./robots.ts";
 import type { EvidenceRow, EvidenceStore } from "./store.ts";
@@ -239,7 +240,7 @@ export class CompanyCollector {
         let vp;
         try {
           vp = await session.openPage(viewport);
-          const result = await capturePage(vp.page, target.url, this.deps.pageTimeoutMs);
+          const result = await capturePage(vp.page, target.url, { timeoutMs: this.deps.pageTimeoutMs, touch: viewport.hasTouch });
           outcomes.push({ viewport, result, userAgent: vp.userAgent, status: result.accessStatus, note: null });
           this.log(result.accessStatus === "captured" ? "info" : "warn", "capture.page", {
             slot: target.slot,
@@ -248,6 +249,7 @@ export class CompanyCollector {
             http: result.httpStatus,
             ms: result.loadDurationMs,
             url: target.url,
+            overlays: result.overlayDismissal?.status ?? null,
           });
           if (result.accessStatus === "blocked") break;
           if (accept && outcomes.length === 1 && result.accessStatus === "captured" && !accept(result)) break;
@@ -285,8 +287,11 @@ export class CompanyCollector {
     const base = `${runId}/${site.domain}/${target.slot}-${o.viewport.name}`;
     let screenshotPath: string | null = null;
     let fullPath: string | null = null;
+    let unobstructedPath: string | null = null;
     if (r?.viewportPng) screenshotPath = await this.saveImage(`${base}.png`, r.viewportPng, "image/png");
+    if (r?.unobstructedPng) unobstructedPath = await this.saveImage(`${base}-unobstructed.png`, r.unobstructedPng, "image/png");
     if (r?.fullPageJpeg) fullPath = await this.saveImage(`${base}-full.jpg`, r.fullPageJpeg, "image/jpeg");
+    const dismissal = o.status === "captured" ? r?.overlayDismissal ?? null : null;
 
     const notes = [...target.notes, o.note].filter(Boolean).join(" | ") || null;
     await this.deps.store.insertEvidence({
@@ -307,6 +312,15 @@ export class CompanyCollector {
       page_title: r?.title ?? null,
       screenshot_path: screenshotPath,
       full_page_screenshot_path: fullPath,
+      unobstructed_screenshot_path: unobstructedPath,
+      overlay_dismissal_status: dismissal?.status ?? null,
+      capture_states: dismissal
+        ? buildCaptureStates(
+            dismissal,
+            { path: screenshotPath, at: r?.initialCapturedAt ?? null },
+            { path: unobstructedPath, at: r?.unobstructedCapturedAt ?? null },
+          )
+        : [],
       extracted_text: r?.text ?? null,
       extracted_text_length: r?.textLength ?? null,
       content_hash: r?.contentHash ?? null,
@@ -354,6 +368,9 @@ export class CompanyCollector {
       page_title: null,
       screenshot_path: null,
       full_page_screenshot_path: null,
+      unobstructed_screenshot_path: null,
+      overlay_dismissal_status: null,
+      capture_states: [],
       extracted_text: null,
       extracted_text_length: null,
       content_hash: null,

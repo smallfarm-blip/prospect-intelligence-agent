@@ -28,6 +28,28 @@ function label(r: StoredEvidence): string {
   return `${r.page_slot}/${r.viewport_name} (${r.id.slice(0, 8)})`;
 }
 
+function checkCaptureStates(r: StoredEvidence, where: string, problems: string[], warnings: string[]): void {
+  const status = r.overlay_dismissal_status;
+  if (!status) {
+    problems.push(`${where} has no overlay dismissal status`);
+    return;
+  }
+  const [initial, after] = r.capture_states ?? [];
+  if (r.capture_states?.length !== 2 || initial?.state !== "initial_viewport" || after?.state !== "after_overlay_dismissal") {
+    problems.push(`${where} capture states must be [initial_viewport, after_overlay_dismissal]`);
+    return;
+  }
+  if (initial.screenshot_path !== r.screenshot_path) problems.push(`${where} initial state does not point at the original screenshot`);
+  const expectsAfterShot = status !== "navigated_away" && status !== "error";
+  if (expectsAfterShot && !r.unobstructed_screenshot_path) problems.push(`${where} has no after-dismissal screenshot`);
+  if (after.screenshot_path !== r.unobstructed_screenshot_path) problems.push(`${where} after-dismissal state does not match the stored screenshot`);
+
+  const remaining = after.overlays_visible.map((o) => `${o.kind} "${o.label.slice(0, 40)}"`).join("; ");
+  if (status === "not_dismissed" || status === "partially_dismissed") warnings.push(`${where} overlays still visible after dismissal attempt (${status}): ${remaining}`);
+  if (status === "navigated_away") warnings.push(`${where} an overlay control navigated away; no unobstructed screenshot`);
+  if (status === "error") warnings.push(`${where} overlay dismissal errored: ${after.error ?? "unknown error"}`);
+}
+
 /**
  * Checks that the stored evidence is internally consistent and complete. It verifies that
  * records and files exist and are well-formed; it does not judge what the pages show.
@@ -41,6 +63,7 @@ export async function verifyEvidence(
   const files: string[] = [];
   const explained: string[] = [];
   const matrix: string[] = [];
+  const states: string[] = [];
   const warnings: string[] = [];
   const coverage: SiteCoverage[] = [];
 
@@ -56,6 +79,7 @@ export async function verifyEvidence(
         const productSignal = s.jsonLdTypes?.some((t) => /product/i.test(t)) || /product/i.test(s.ogType ?? "") || s.addToCartControlVisible;
         if (!productSignal) warnings.push(`${domain} ${label(r)} classified as product page by URL only; no product markup or add-to-cart control detected`);
       }
+      checkCaptureStates(r, `${domain} ${label(r)}`, states, warnings);
     } else {
       if (!r.navigation_notes && !r.error_message && r.access_status !== "blocked") {
         explained.push(`${label(r)} has status ${r.access_status} with no explanation`);
@@ -64,7 +88,7 @@ export async function verifyEvidence(
         explained.push(`${label(r)} marked blocked without a recorded reason`);
       }
     }
-    for (const path of [r.screenshot_path, r.full_page_screenshot_path]) {
+    for (const path of [r.screenshot_path, r.unobstructed_screenshot_path, r.full_page_screenshot_path]) {
       if (path && !(await screenshotExists(path))) files.push(`${label(r)} screenshot not found in storage: ${path}`);
     }
   }
@@ -88,6 +112,7 @@ export async function verifyEvidence(
     { name: "Every referenced screenshot file exists in storage", passed: !files.length, problems: files },
     { name: "Every non-captured page records why", passed: !explained.length, problems: explained },
     { name: "Each site has exactly one record per required page and viewport", passed: !matrix.length, problems: matrix },
+    { name: "Every captured page records its initial and after-dismissal states", passed: !states.length, problems: states },
   ];
   return { checks, warnings, coverage, allChecksPassed: checks.every((c) => c.passed) };
 }

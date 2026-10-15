@@ -56,8 +56,9 @@ export const SCROLL_THROUGH_SCRIPT = `(async () => {
 })()`;
 
 /**
- * Finds visible overlays (fixed/sticky layers, dialogs, overlay iframes) and the visible controls
- * inside them that a visitor could use to close, decline or accept. Read-only: it never changes
+ * Finds visible overlays (fixed/sticky layers, dialogs, overlay iframes, known cookie banners however
+ * positioned, including inside open shadow roots) and the visible controls inside them that a visitor
+ * could use to close, decline or accept. Read-only: it never changes
  * the page. Coordinates are relative to the frame the script runs in.
  * In "frame" mode it describes the whole document of an overlay iframe instead.
  */

@@ -1,9 +1,11 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { localScreenshotPath, type ScreenshotKind } from "./archive.ts";
 import type { CostTracker } from "./cost.ts";
+import { renderHtmlReport } from "./reportHtml.ts";
 import type { StoredEvidence } from "./store.ts";
 import type { VerificationReport } from "./verify.ts";
-import { REQUIRED_SLOTS, REQUIRED_VIEWPORTS } from "./verify.ts";
+import { orderEvidence } from "./verify.ts";
 
 export interface RunReportInput {
   runId: string;
@@ -51,8 +53,22 @@ export function buildCostSummary(input: Pick<RunReportInput, "tracker" | "unitPr
   };
 }
 
-export function writeReports(input: RunReportInput): { jsonPath: string; mdPath: string } {
+export type CostSummary = ReturnType<typeof buildCostSummary>;
+export type LocalImage = (e: StoredEvidence, kind: ScreenshotKind) => string | null;
+
+/** Where each stored screenshot's local copy lives, relative to the run folder. */
+export function localImageResolver(sites: RunReportInput["sites"]): LocalImage {
+  const domains = new Map(sites.map((s) => [s.companyId, s.domain]));
+  return (e, kind) => {
+    const stored = kind === "initial" ? e.screenshot_path : kind === "after-dismissal" ? e.unobstructed_screenshot_path : e.full_page_screenshot_path;
+    const domain = domains.get(e.company_id);
+    return stored && domain ? localScreenshotPath(domain, e.page_slot, e.viewport_name, kind) : null;
+  };
+}
+
+export function writeReports(input: RunReportInput): { jsonPath: string; mdPath: string; htmlPath: string } {
   const cost = buildCostSummary(input);
+  const image = localImageResolver(input.sites);
   const json = {
     runId: input.runId,
     status: input.status,
@@ -82,6 +98,7 @@ export function writeReports(input: RunReportInput): { jsonPath: string; mdPath:
           screenshotPath: e.screenshot_path,
           fullPageScreenshotPath: e.full_page_screenshot_path,
           unobstructedScreenshotPath: e.unobstructed_screenshot_path,
+          localScreenshots: { initial: image(e, "initial"), afterDismissal: image(e, "after-dismissal"), fullPage: image(e, "full-page") },
           overlayDismissalStatus: e.overlay_dismissal_status,
           captureStates: e.capture_states,
           discoveryMethod: e.discovery_method,
@@ -97,7 +114,10 @@ export function writeReports(input: RunReportInput): { jsonPath: string; mdPath:
 
   const mdPath = join(input.outputDir, "report.md");
   writeFileSync(mdPath, renderMarkdown(input, cost));
-  return { jsonPath, mdPath };
+
+  const htmlPath = join(input.outputDir, "report.html");
+  writeFileSync(htmlPath, renderHtmlReport(input, cost, image));
+  return { jsonPath, mdPath, htmlPath };
 }
 
 function cell(text: string | null | undefined): string {
@@ -124,7 +144,7 @@ function overlayLines(e: StoredEvidence): string[] {
   return lines;
 }
 
-function renderMarkdown(input: RunReportInput, cost: ReturnType<typeof buildCostSummary>): string {
+function renderMarkdown(input: RunReportInput, cost: CostSummary): string {
   const v = input.verification;
   const out: string[] = [];
   out.push(`# Evidence capture report`, "");
@@ -161,16 +181,7 @@ function renderMarkdown(input: RunReportInput, cost: ReturnType<typeof buildCost
     const rows = input.evidence.filter((e) => e.company_id === site.companyId);
     out.push("", `## ${site.name} (${site.domain}, ${site.category})`, "", `robots.txt: ${site.robots}`, "");
     out.push("| Slot | Viewport | Status | HTTP | URL | Screenshots | Overlays | Notes |", "|---|---|---|---|---|---|---|---|");
-    const order = (slot: string) => {
-      const i = (REQUIRED_SLOTS as readonly string[]).indexOf(slot);
-      return i === -1 ? 99 : i;
-    };
-    const sorted = [...rows].sort(
-      (a, b) =>
-        order(a.page_slot) - order(b.page_slot) ||
-        a.page_slot.localeCompare(b.page_slot) ||
-        (REQUIRED_VIEWPORTS as readonly string[]).indexOf(a.viewport_name) - (REQUIRED_VIEWPORTS as readonly string[]).indexOf(b.viewport_name),
-    );
+    const sorted = orderEvidence(rows);
     for (const e of sorted) {
       const shot = e.screenshot_path
         ? [
@@ -189,6 +200,6 @@ function renderMarkdown(input: RunReportInput, cost: ReturnType<typeof buildCost
     const overlays = sorted.flatMap(overlayLines);
     if (overlays.length) out.push("", `### Overlays`, "", "Detected from the first-visit viewport. The initial screenshot is untouched; the after-dismissal screenshot was taken only after pressing each overlay's own visible control.", "", ...overlays);
   }
-  out.push("", "Screenshot links are signed and expire after 7 days. Local copies are in the `screenshots/` folder next to this report.", "");
+  out.push("", "Screenshot links are signed and expire after 7 days. Local copies are in the `screenshots/` folder next to this report (grouped by company and page), and `report.html` shows them all.", "");
   return out.join("\n");
 }

@@ -1,5 +1,6 @@
 import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { localScreenshotPath, type ScreenshotKind } from "./archive.ts";
 import type { BrowserProvider, ViewportSpec } from "./browser/provider.ts";
 import { VIEWPORTS } from "./browser/provider.ts";
 import { capturePage, type AccessStatus, type CaptureResult } from "./capture.ts";
@@ -288,9 +289,11 @@ export class CompanyCollector {
     let screenshotPath: string | null = null;
     let fullPath: string | null = null;
     let unobstructedPath: string | null = null;
-    if (r?.viewportPng) screenshotPath = await this.saveImage(`${base}.png`, r.viewportPng, "image/png");
-    if (r?.unobstructedPng) unobstructedPath = await this.saveImage(`${base}-unobstructed.png`, r.unobstructedPng, "image/png");
-    if (r?.fullPageJpeg) fullPath = await this.saveImage(`${base}-full.jpg`, r.fullPageJpeg, "image/jpeg");
+    const save = (kind: ScreenshotKind, suffix: string, body: Buffer, contentType: string) =>
+      this.saveImage(`${base}${suffix}`, localScreenshotPath(site.domain, target.slot, o.viewport.name, kind), body, contentType);
+    if (r?.viewportPng) screenshotPath = await save("initial", ".png", r.viewportPng, "image/png");
+    if (r?.unobstructedPng) unobstructedPath = await save("after-dismissal", "-unobstructed.png", r.unobstructedPng, "image/png");
+    if (r?.fullPageJpeg) fullPath = await save("full-page", "-full.jpg", r.fullPageJpeg, "image/jpeg");
     const dismissal = o.status === "captured" ? r?.overlayDismissal ?? null : null;
 
     const notes = [...target.notes, o.note].filter(Boolean).join(" | ") || null;
@@ -384,11 +387,11 @@ export class CompanyCollector {
     this.summaries.push({ slot, viewport: viewport.name, status, url: null });
   }
 
-  private async saveImage(path: string, body: Buffer, contentType: string): Promise<string> {
-    const local = join(this.deps.outputDir, "screenshots", path.split("/").slice(1).join("/"));
-    mkdirSync(join(local, ".."), { recursive: true });
+  private async saveImage(storagePath: string, localPath: string, body: Buffer, contentType: string): Promise<string> {
+    const local = join(this.deps.outputDir, localPath);
+    mkdirSync(dirname(local), { recursive: true });
     writeFileSync(local, body);
-    return this.deps.store.uploadScreenshot(path, body, contentType);
+    return this.deps.store.uploadScreenshot(storagePath, body, contentType);
   }
 
   private log(level: "info" | "warn" | "error", event: string, data: Record<string, unknown> = {}): void {

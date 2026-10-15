@@ -24,7 +24,8 @@ scheduling, and nothing in its output should be read as a judgement about a site
 6. Each viewport capture is written to `page_evidence` and stored in a private bucket
    (`evidence-screenshots`): two viewport PNGs (see "Capture states" below), full-page JPEG, URL, final URL,
    timestamp, HTTP status, title, visible text (first 20k chars + SHA-256 of the full text), and page-type signals.
-7. Verifies the stored evidence, then writes `output/<run-id>/report.md` and `report.json`.
+7. Verifies the stored evidence, then writes `report.html`, `report.md` and `report.json` to the run folder,
+   points `output/latest` at it and refreshes `output/index.html`.
 
 Sites that block automated access are recorded as `blocked` with the reason. The worker does not try
 to get around blocks, CAPTCHAs or `robots.txt` rules.
@@ -154,18 +155,48 @@ A full run is 3 sites x (1 homepage + 1-3 PLP candidates + 2 PDPs) sessions. Tha
 
 ## Viewing results
 
-Each run writes to `worker/output/<run-id>/`:
+Start with **`worker/output/index.html`**. It lists every run, newest first, with status, sites, pages
+captured and estimated cost, and links to each report. **`worker/output/latest/report.html`** always opens the
+most recent finished run.
 
-- `report.md` — human-readable summary:
-  - coverage per site (captured / 8 required);
-  - a per-page table with status, final URL, HTTP code, overlay dismissal status and notes;
-  - an "Overlays" section per site describing each dismissal action;
-  - verification checks and warnings;
-  - the cost section;
-  - links to every screenshot. Links are signed and expire after 7 days.
-- `report.json` — the same data, machine-readable.
-- `screenshots/` — local copies of every screenshot.
+```
+output/
+  index.html                          all runs
+  latest -> 2026-10-15_14-03-22Z_a91d77f0   shortcut (no copied files)
+  2026-10-15_14-03-22Z_a91d77f0/       one folder per run: UTC start time + first 8 chars of the run ID
+    report.html  report.md  report.json  worker.log.jsonl
+    screenshots/
+      kosas.com/
+        homepage/  plp/  pdp-1/  pdp-2/  plp-candidate-1/ ...
+          desktop-initial.png  desktop-after-dismissal.png  desktop-full-page.jpg
+          mobile-initial.png   mobile-after-dismissal.png   mobile-full-page.jpg
+  3f2b9c1e-...-000000000001/            older runs keep their original UUID folder, unchanged
+```
+
+In each run folder:
+
+- `report.html` — standalone page (open it in any browser, works offline):
+  - summary of pages captured, estimated cost, checks and overlay outcomes;
+  - coverage, verification checks and warnings, and the cost breakdown;
+  - one card per page with desktop and mobile side by side. Each shows the initial and after-dismissal
+    screenshots (click to open full size), the capture and overlay status, and every dismissal action.
+- `report.md` — the same summary as Markdown, with signed Storage links that expire after 7 days.
+- `report.json` — the same data, machine-readable. Each capture lists both its Storage paths and its
+  `localScreenshots`.
+- `screenshots/` — local copies, grouped by company and page.
 - `worker.log.jsonl` — structured operational log (one JSON event per line).
+
+Notes:
+
+- The full run UUID is still the ID used everywhere in Supabase and appears in every report. Only the
+  local folder name is shortened.
+- `latest` moves only after a run writes its reports. A run that aborts early keeps its folder and appears in
+  the index as "no report". `latest` stays on the previous finished run.
+- `latest` is a symbolic link (a directory junction on Windows). If it can't be created, or a real folder
+  named `latest` already exists, the worker leaves it alone and prints a note. The index still links every run.
+- Older UUID-named folders are listed in the index but never modified, so their screenshots keep their
+  original flat names and only `report.md` is available for them.
+- Storage paths are unchanged, so existing database records and links stay valid.
 
 The same data is in Supabase:
 

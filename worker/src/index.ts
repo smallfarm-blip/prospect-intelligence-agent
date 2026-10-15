@@ -3,6 +3,7 @@ import { mkdirSync } from "node:fs";
 import { hostname } from "node:os";
 import { join, resolve } from "node:path";
 import pkg from "../package.json" with { type: "json" };
+import { runFolderName, updateLatestLink, writeRunIndex } from "./archive.ts";
 import { BrowserlessProvider } from "./browser/browserless.ts";
 import { CompanyCollector, type SlotSummary } from "./collector.ts";
 import { loadConfig } from "./config.ts";
@@ -21,10 +22,12 @@ async function main(): Promise<number> {
   const runId = randomUUID();
   const workerId = `${hostname()}:${process.pid}`;
   const workerVersion = `${pkg.name}@${pkg.version}`;
-  const outputDir = resolve("output", runId);
+  const started = new Date();
+  const outputRoot = resolve("output");
+  const outputDir = join(outputRoot, runFolderName(started, runId));
   mkdirSync(outputDir, { recursive: true });
   const logger = createLogger(join(outputDir, "worker.log.jsonl"));
-  const startedAt = new Date().toISOString();
+  const startedAt = started.toISOString();
   const errors: string[] = [];
 
   const store = new EvidenceStore(config.supabaseUrl, config.supabaseSecretKey);
@@ -114,7 +117,7 @@ async function main(): Promise<number> {
         : "completed";
   const endedAt = new Date().toISOString();
 
-  const { mdPath } = writeReports({
+  const { htmlPath } = writeReports({
     runId,
     status,
     startedAt,
@@ -149,8 +152,13 @@ async function main(): Promise<number> {
     errors,
   });
 
-  logger.log("info", "run.done", { runId, status, estUnits: tracker.estimatedUnits, estCostUsd: tracker.estimatedCostUsd, report: mdPath });
-  console.log(`\nReport: ${mdPath}`);
+  const latest = updateLatestLink(outputRoot, outputDir);
+  if (!latest.ok) logger.log("warn", "output.latest_not_updated", { detail: latest.detail });
+  const indexPath = writeRunIndex(outputRoot);
+
+  logger.log("info", "run.done", { runId, status, estUnits: tracker.estimatedUnits, estCostUsd: tracker.estimatedCostUsd, report: htmlPath, index: indexPath });
+  console.log(`\nReport: ${htmlPath}\nAll runs: ${indexPath}`);
+  if (!latest.ok) console.log(`Note: ${latest.detail}`);
   return status === "failed" ? 1 : 0;
 }
 

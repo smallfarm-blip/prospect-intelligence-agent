@@ -24,6 +24,16 @@ export interface VerificationReport {
   allChecksPassed: boolean;
 }
 
+/** Required pages first in slot order (extra candidates after), desktop before mobile. */
+export function orderEvidence<T extends Pick<StoredEvidence, "page_slot" | "viewport_name">>(rows: T[]): T[] {
+  const order = (slot: string) => {
+    const i = (REQUIRED_SLOTS as readonly string[]).indexOf(slot);
+    return i === -1 ? 99 : i;
+  };
+  const vp = (name: string) => (REQUIRED_VIEWPORTS as readonly string[]).indexOf(name);
+  return [...rows].sort((a, b) => order(a.page_slot) - order(b.page_slot) || a.page_slot.localeCompare(b.page_slot) || vp(a.viewport_name) - vp(b.viewport_name));
+}
+
 function label(r: StoredEvidence): string {
   return `${r.page_slot}/${r.viewport_name} (${r.id.slice(0, 8)})`;
 }

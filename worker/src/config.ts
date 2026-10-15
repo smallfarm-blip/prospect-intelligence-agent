@@ -29,13 +29,13 @@ export interface WorkerConfig {
 
 const DENYLISTED_CATEGORIES = ["jewelry", "jewellery"];
 
-function required(env: NodeJS.ProcessEnv, key: string, missing: string[]): string {
+export function required(env: NodeJS.ProcessEnv, key: string, missing: string[]): string {
   const value = env[key]?.trim();
   if (!value) missing.push(key);
   return value ?? "";
 }
 
-function num(env: NodeJS.ProcessEnv, key: string, fallback: number, problems: string[]): number {
+export function num(env: NodeJS.ProcessEnv, key: string, fallback: number, problems: string[]): number {
   const raw = env[key]?.trim();
   if (!raw) return fallback;
   const n = Number(raw);

@@ -288,3 +288,45 @@ duration and converts it with that rule:
   screenshot still shows the banner (`partially_dismissed` or `not_dismissed`). Declining cookies can still
   change what loads afterwards; the action is recorded so the after state can be read with that in mind.
 - One worker process at a time is the tested configuration, although job claiming is safe for several.
+
+---
+
+# Phase 1: evidence-backed opportunity analysis
+
+Phase 1 reads evidence already stored by Phase 0 and never visits a website. It produces 0 to 5 opportunity hypotheses per run, each independently verified, and stores everything for review in the web app.
+
+## How an analysis run works
+
+1. **Evidence loader** pulls the research run's pages, screenshots (initial, after overlay dismissal, full-page sections) and page text from Supabase, and prepares model-sized images. Derived images are uploaded to `analysis/<analysis_run_id>/` in the private screenshot bucket.
+2. **Analyst** (one call) receives all evidence and returns findings in a fixed structure that separates observed facts, hypothesis, commercial relevance and measurement. Zero findings is a valid result. Invalid output is retried once.
+3. **Automatic checks** run on each finding: cited references exist, quotes match page text, no invented outcome figures, overlay claims agree with the screenshots and metadata. A blocker rejects the finding without a model call.
+4. **Verifier** (one call per finding, separate prompt) sees only the finding's claims and the evidence they cite, and judges each claim.
+5. **Optional revision** (`--revise`): a finding marked "needs revision" gets one rewrite attempt, stored as a new linked finding and re-verified.
+
+## Budget
+
+The budget (default $2.50) is enforced before each call: the worst-case cost of the call (provider-counted input tokens plus a margin, plus the maximum output tokens) must fit in what remains, otherwise the call is refused and the run ends as `stopped_budget`. If a call fails in a way where billing is unknown (timeout, network error, server error, malformed reply), its worst case is counted as spent. Costs shown are estimates from token usage and configured prices; check the Anthropic console for billed amounts.
+
+## Commands
+
+```bash
+cd worker
+npm run analyse -- --run 7db7f203 --company kosas.com            # free dry run: loads evidence, prints the plan and worst-case cost, writes nothing
+npm run analyse -- --run 7db7f203 --company kosas.com --live     # paid analysis
+npm run analyse -- --run 7db7f203 --company kosas.com --live --revise
+```
+
+`--run` accepts a full research run ID or its first 8 characters. Logs go to `output/analysis/`.
+
+Pilot: research run `7db7f203`. Regression: research run `d1408822`, where a cookie banner stayed visible although the record said overlays were dismissed. The automated tests cover this case with fixtures; no rescan is needed.
+
+## Reviewer access
+
+1. Open the web app and create an account.
+2. The app shows your account ID. Add it to the allowlist in the Supabase SQL editor:
+   `insert into reviewers (user_id, note) values ('<account id>', 'owner');`
+3. Reload. Reviewers can read analysis results and screenshots and record approve / reject (with reason) / revise decisions. Nobody else, and no signed-out visitor, can read anything.
+
+## Tests
+
+`npm test` runs Phase 0 and Phase 1 tests with mocked model responses (no network, no cost). `npm run typecheck` checks types.

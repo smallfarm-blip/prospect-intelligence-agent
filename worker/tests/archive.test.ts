@@ -138,9 +138,11 @@ function evidence(slot: string, viewport: "desktop" | "mobile", overrides: Parti
         detail: "Overlay no longer visible after pressing the control",
       },
     ],
+    removedOverlays: [],
     remainingOverlays: [],
     error: null,
   };
+  dismissal.removedOverlays = [dismissal.actions[0].overlay];
   return {
     id: `${slot}-${viewport}-0000`,
     research_run_id: RUN_B,
@@ -233,6 +235,11 @@ test("the HTML report links local screenshots for both states and shows statuses
   assert.match(html, /\$0 · |Estimated cost/);
   assert.match(html, /kosas.com pdp_2\/mobile overlays still visible/);
   assert.match(html, /href="\.\.\/index.html"/);
+  assert.match(html, />removed<\/span> <b>promotional<\/b> “Get 15% off &lt;b&gt;now/);
+  assert.match(html, />still visible<\/span> none/);
+  const md = readFileSync(mdPath, "utf8");
+  assert.match(md, /removed: promotional "Get 15% off/);
+  assert.match(md, /still visible after final check: none/);
 
   assert.doesNotMatch(html, /<script>/, "page content is escaped");
   assert.match(html, /Get 15% off &lt;b&gt;now&lt;\/b&gt;/);

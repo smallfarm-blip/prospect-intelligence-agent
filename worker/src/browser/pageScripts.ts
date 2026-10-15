@@ -73,15 +73,46 @@ const OVERLAY_SCAN_SOURCE = String.raw`(mode) => {
   const ACCEPT_LABEL = /^(accept|accept all|accept all cookies|accept cookies|allow|allow all|allow all cookies|allow cookies|agree|i agree|agree and close|accept and close|ok|okay|got it|i understand|understood)$/i;
   const FORM_ACTION = /sign ?up|subscribe|claim|unlock|get \d|submit|shop now|sign in|log ?in|join|continue to|save preferences|manage|customi[sz]e|settings|preferences/i;
 
+  const CONTROL_SELECTOR = 'button, [role="button"], a, input[type="button"], input[type="submit"], [aria-label]';
+  const CMP_CONTAINER = /onetrust|cookiebot|didomi|usercentrics|osano|truste|termly|shopify-pc__banner|cookie-?(banner|consent|notice|bar|law)|consent-?(banner|bar|notice)|gdpr|cc-window|privacy-banner/i;
+
   const clean = (s) => (s || "").replace(/\s+/g, " ").trim();
-  const textOf = (el) => clean(el.innerText || el.textContent || "");
+  const textOf = (el) => clean(el.innerText || el.textContent || (el.shadowRoot ? el.shadowRoot.textContent : "") || "");
   const hintOf = (el) => [el.id || "", typeof el.className === "string" ? el.className : "", el.getAttribute("aria-label") || "", el.getAttribute("title") || "", el.getAttribute("src") || ""].join(" ");
+  const parentOf = (n) => n.parentElement || (n.parentNode && n.parentNode.host) || null;
+  const deepContains = (a, b) => {
+    for (let n = b; n; n = parentOf(n)) if (n === a) return true;
+    return false;
+  };
+  // Elements under root, including those inside open shadow roots.
+  const descendants = (root) => {
+    const out = [];
+    const walk = (node) => {
+      if (node.shadowRoot) walk(node.shadowRoot);
+      const els = node.querySelectorAll("*");
+      for (let i = 0; i < els.length; i++) {
+        out.push(els[i]);
+        if (els[i].shadowRoot) walk(els[i].shadowRoot);
+      }
+    };
+    walk(root);
+    return out;
+  };
+  const topAt = (x, y) => {
+    let hit = document.elementFromPoint(x, y);
+    while (hit && hit.shadowRoot && hit.shadowRoot.elementFromPoint) {
+      const inner = hit.shadowRoot.elementFromPoint(x, y);
+      if (!inner || inner === hit) break;
+      hit = inner;
+    }
+    return hit;
+  };
+  const styleShown = (s) => s.visibility !== "hidden" && s.display !== "none" && Number(s.opacity) !== 0;
   const visible = (el) => {
     const r = el.getBoundingClientRect();
     if (r.width < 2 || r.height < 2) return false;
     if (r.bottom <= 0 || r.right <= 0 || r.top >= vh || r.left >= vw) return false;
-    const s = getComputedStyle(el);
-    return s.visibility !== "hidden" && s.display !== "none" && Number(s.opacity) !== 0;
+    return styleShown(getComputedStyle(el));
   };
   const classify = (text, hint) => {
     if (CONSENT_TEXT.test(text) || CONSENT_HINT.test(hint)) return "consent";
@@ -96,8 +127,8 @@ const OVERLAY_SCAN_SOURCE = String.raw`(mode) => {
   const controlsIn = (root) => {
     const out = [];
     const seen = new Set();
-    root.querySelectorAll('button, [role="button"], a, input[type="button"], input[type="submit"], [aria-label]').forEach((el) => {
-      if (seen.has(el) || !visible(el)) return;
+    descendants(root).forEach((el) => {
+      if (seen.has(el) || !el.matches || !el.matches(CONTROL_SELECTOR) || !visible(el)) return;
       const tag = el.tagName.toLowerCase();
       if (tag === "a") {
         const href = el.getAttribute("href") || "";
@@ -113,8 +144,8 @@ const OVERLAY_SCAN_SOURCE = String.raw`(mode) => {
       el.querySelectorAll("*").forEach((child) => seen.add(child));
       const r = el.getBoundingClientRect();
       const x = Math.round(r.left + r.width / 2), y = Math.round(r.top + r.height / 2);
-      const hit = document.elementFromPoint(x, y);
-      out.push({ label: label || "(icon without text)", intent, tag, x, y, hitTestOk: !!hit && (hit === el || el.contains(hit)) });
+      const hit = topAt(x, y);
+      out.push({ label: label || "(icon without text)", intent, tag, x, y, hitTestOk: !!hit && deepContains(el, hit) });
     });
     return out;
   };
@@ -126,31 +157,55 @@ const OVERLAY_SCAN_SOURCE = String.raw`(mode) => {
   }
 
   const candidates = [];
-  const all = document.body ? document.body.getElementsByTagName("*") : [];
-  for (let i = 0; i < all.length; i++) {
-    const el = all[i];
-    const role = el.getAttribute("role");
-    const modal = role === "dialog" || role === "alertdialog" || el.getAttribute("aria-modal") === "true" || (el.tagName === "DIALOG" && el.open);
-    const s = getComputedStyle(el);
-    if (!(s.position === "fixed" || s.position === "sticky" || modal)) continue;
-    if (!visible(el)) continue;
+  const consider = (el, position, modal, knownConsent) => {
+    if (candidates.some((c) => c.el === el) || !visible(el)) return;
     const r = el.getBoundingClientRect();
     const w = Math.max(0, Math.min(r.right, vw) - Math.max(r.left, 0));
     const h = Math.max(0, Math.min(r.bottom, vh) - Math.max(r.top, 0));
     const coverage = (w * h) / (vw * vh);
     const isFrame = el.tagName === "IFRAME";
     const text = isFrame ? "" : textOf(el).slice(0, 2000);
-    const kind = classify(text, hintOf(el));
+    const kind = knownConsent ? "consent" : classify(text, hintOf(el));
     const banner = w >= vw * 0.6 && h >= 48;
-    if (!isFrame && el.getElementsByTagName("a").length > 40) continue;
+    if (!isFrame && el.getElementsByTagName("a").length > 40) return;
     if (kind === "other") {
-      if (s.position === "sticky") continue;
-      if (!modal && !isFrame && (coverage < 0.3 || !text)) continue;
-      if (isFrame && coverage < 0.15) continue;
-    } else if (coverage < 0.05 && !banner) continue;
-    candidates.push({ el, kind, text, coverage, isFrame, modal });
+      if (position === "sticky") return;
+      if (!modal && !isFrame && (coverage < 0.3 || !text)) return;
+      if (isFrame && coverage < 0.15) return;
+    } else if (coverage < 0.05 && !banner) return;
+    candidates.push({ el, kind, text, coverage, isFrame });
+  };
+  // A fixed wrapper with no size of its own (common for consent tools) still shows its children.
+  const shownChildren = (el, depth) => {
+    const out = [];
+    const kids = el.children || [];
+    for (let i = 0; i < kids.length; i++) {
+      if (visible(kids[i])) out.push(kids[i]);
+      else if (depth < 3) out.push(...shownChildren(kids[i], depth + 1));
+    }
+    return out;
+  };
+  const all = document.body ? descendants(document.body) : [];
+  for (const el of all) {
+    const role = el.getAttribute("role");
+    const modal = role === "dialog" || role === "alertdialog" || el.getAttribute("aria-modal") === "true" || (el.tagName === "DIALOG" && el.open);
+    const s = getComputedStyle(el);
+    if (s.position === "fixed" || s.position === "sticky" || modal) {
+      if (visible(el)) consider(el, s.position, modal, false);
+      else if (s.position === "fixed" && styleShown(s)) shownChildren(el, 0).forEach((child) => consider(child, "fixed", modal, false));
+    } else if (CMP_CONTAINER.test((el.id || "") + " " + (typeof el.className === "string" ? el.className : "")) && visible(el) && CONSENT_TEXT.test(textOf(el)) && controlsIn(el).length) {
+      // Known consent banners are reported wherever they are positioned.
+      consider(el, s.position, modal, true);
+    }
   }
-  const tops = candidates.filter((c) => !candidates.some((o) => o !== c && o.el.contains(c.el)));
+  const inside = (outer, c) => outer !== c && deepContains(outer.el, c.el);
+  const directChildren = (parent) => candidates.filter((c) => inside(parent, c) && !candidates.some((o) => inside(parent, o) && inside(o, c)));
+  // A container holding overlays of different kinds (e.g. a promo and a cookie banner) is a wrapper, not one overlay.
+  const split = (c) => {
+    const kids = directChildren(c);
+    return kids.length >= 2 && new Set(kids.map((k) => k.kind)).size >= 2 ? kids.flatMap(split) : [c];
+  };
+  const tops = candidates.filter((c) => !candidates.some((o) => inside(o, c))).flatMap(split);
   return {
     viewport: { width: vw, height: vh },
     overlays: tops.map((c) => ({

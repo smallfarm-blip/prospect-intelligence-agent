@@ -30,6 +30,7 @@ class FakePage implements OverlayDriver {
   url = "https://shop.test/products/a";
   presses: string[] = [];
   waits = 0;
+  onWait: ((page: FakePage) => void) | null = null;
   constructor(
     public visible: DetectedOverlay[],
     private effects: Record<string, Effect> = {},
@@ -48,6 +49,7 @@ class FakePage implements OverlayDriver {
   }
   async wait() {
     this.waits++;
+    this.onWait?.(this);
   }
   remove(label: string) {
     this.visible = this.visible.filter((o) => o.label !== label);
@@ -99,7 +101,7 @@ test("an overlay that survives its control is recorded as still visible and pres
   assert.deepEqual(page.presses, ["Close"]);
   assert.equal(r.actions[0].outcome, "still_visible");
   assert.equal(r.remainingOverlays.length, 1);
-  assert.equal(page.waits, 2, "waits once more before concluding it is still visible");
+  assert.equal(page.waits, 3, "waits once more before concluding it is still visible, then once for the final rescan");
 });
 
 test("covered controls and overlays without a dismiss control are left alone and explained", async () => {
@@ -143,12 +145,64 @@ test("an overlay that appears after the first dismissal is handled and marked as
   assert.equal(r.initialOverlays.length, 1);
 });
 
-test("consent with only an accept control uses it as a last resort", async () => {
+test("cookies are never accepted automatically, even when accept is the only control", async () => {
   const consent = overlay("consent", "This site uses cookies", [["Got it", "accept"]]);
   const page = new FakePage([consent], { "Got it": (p) => p.remove(consent.label) });
   const r = await dismissOverlays(page, { method: "click", settleMs: 0 });
+  assert.deepEqual(page.presses, []);
+  assert.equal(r.status, "not_dismissed");
+  assert.equal(r.actions[0].outcome, "accept_only");
+  assert.match(r.actions[0].detail, /never accepted automatically/);
+  assert.deepEqual(r.remainingOverlays.map((o) => o.label), ["This site uses cookies"]);
+});
+
+test("Kosas mobile PDP: promo closed, accept-only cookie banner remains, so the result is partial", async () => {
+  const consent = overlay("consent", "This website uses cookies", [["Accept", "accept", false]], 664);
+  const promo = overlay("promotional", "Reveal Your Reward", [["Close", "close"]]);
+  const page = new FakePage([promo, consent], {
+    Close: (p) => {
+      p.remove(promo.label);
+      for (const c of p.visible[0].controls) c.hitTestOk = true;
+    },
+    Accept: (p) => p.remove(consent.label),
+  });
+  const r = await dismissOverlays(page, { method: "tap", settleMs: 0 });
+  assert.deepEqual(page.presses, ["Close"]);
+  assert.equal(r.status, "partially_dismissed");
+  assert.deepEqual(r.removedOverlays.map((o) => o.label), ["Reveal Your Reward"]);
+  assert.deepEqual(r.remainingOverlays.map((o) => o.label), ["This website uses cookies"]);
+  assert.deepEqual(r.actions.map((a) => [a.overlay.label, a.outcome]), [
+    ["Reveal Your Reward", "dismissed"],
+    ["This website uses cookies", "accept_only"],
+  ]);
+});
+
+test("a cookie banner that only shows up in the final rescan is still reported as remaining", async () => {
+  const promo = overlay("promotional", "Reveal Your Reward", [["Close", "close"]]);
+  const lateConsent = overlay("consent", "We use cookies", [["Accept all", "accept"]], 700);
+  const page = new FakePage([promo], { Close: (p) => p.remove(promo.label) });
+  page.onWait = (p) => {
+    if (p.waits === 2) p.visible = [lateConsent];
+  };
+  const r = await dismissOverlays(page, { method: "tap", settleMs: 0 });
+  assert.equal(r.status, "partially_dismissed", "never all_dismissed while an overlay is still on screen");
+  assert.deepEqual(r.remainingOverlays.map((o) => o.label), ["We use cookies"]);
+  assert.equal(r.actions[1].firstSeen, "later");
+  assert.deepEqual(page.presses, ["Close"]);
+});
+
+test("a late cookie banner with a reject control is declined after the final rescan", async () => {
+  const promo = overlay("promotional", "Reveal Your Reward", [["Close", "close"]]);
+  const lateConsent = overlay("consent", "We use cookies", [["Accept all", "accept"], ["Reject all", "decline"]], 700);
+  const page = new FakePage([promo], { Close: (p) => p.remove(promo.label), "Reject all": (p) => p.remove(lateConsent.label) });
+  page.onWait = (p) => {
+    if (p.waits === 2) p.visible = [lateConsent];
+  };
+  const r = await dismissOverlays(page, { method: "tap", settleMs: 0 });
+  assert.deepEqual(page.presses, ["Close", "Reject all"]);
   assert.equal(r.status, "all_dismissed");
-  assert.equal(r.actions[0].control?.intent, "accept");
+  assert.deepEqual(r.removedOverlays.map((o) => o.label), ["Reveal Your Reward", "We use cookies"]);
+  assert.deepEqual(r.remainingOverlays, []);
 });
 
 test("the attempt limit leaves remaining overlays recorded", async () => {
@@ -176,6 +230,7 @@ test("capture states keep the initial viewport first and unaltered", async () =>
   assert.equal(states[1].screenshot_path, "run/x/pdp_1-mobile-unobstructed.png");
   assert.equal(states[1].dismissal_status, "all_dismissed");
   assert.deepEqual(states[1].overlays_visible, []);
+  assert.deepEqual(states[1].overlays_removed?.map((o) => o.label), ["Get 15% off"]);
   assert.equal(states[1].actions?.[0].control?.label, "×");
   assert.ok(JSON.parse(JSON.stringify(states)), "states are plain JSON for storage");
 });

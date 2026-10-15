@@ -2,6 +2,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { localScreenshotPath, type ScreenshotKind } from "./archive.ts";
 import type { CostTracker } from "./cost.ts";
+import { removedIn } from "./overlays.ts";
 import { renderHtmlReport } from "./reportHtml.ts";
 import type { StoredEvidence } from "./store.ts";
 import type { VerificationReport } from "./verify.ts";
@@ -139,7 +140,9 @@ function overlayLines(e: StoredEvidence): string[] {
     const how = a.control ? `${a.method} "${a.control.label}" (${a.control.intent})` : "no action";
     lines.push(`  - ${a.overlay.kind} "${cell(a.overlay.label.slice(0, 60))}" (${a.firstSeen}): ${how} -> ${a.outcome}. ${cell(a.detail)}`);
   }
-  for (const o of after.overlays_visible) lines.push(`  - still visible: ${o.kind} "${cell(o.label.slice(0, 60))}"`);
+  const names = (list: typeof after.overlays_visible) => list.map((o) => `${o.kind} "${cell(o.label.slice(0, 60))}"`).join("; ") || "none";
+  lines.push(`  - removed: ${names(removedIn(after))}`);
+  lines.push(`  - still visible after final check: ${names(after.overlays_visible)}`);
   if (after.error) lines.push(`  - error: ${cell(after.error)}`);
   return lines;
 }

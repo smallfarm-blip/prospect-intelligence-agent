@@ -216,6 +216,7 @@ async function captureUnobstructed(page: Page, base: CaptureResult, touch: boole
       status: "error",
       initialOverlays: [],
       actions: [],
+      removedOverlays: [],
       remainingOverlays: [],
       error: (err as Error).message.split("\n")[0].slice(0, 300),
     };

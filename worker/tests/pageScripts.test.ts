@@ -117,24 +117,43 @@ interface NodeSpec {
   z?: number;
   rect?: [number, number, number, number];
   children?: NodeSpec[];
+  /** Children rendered inside an open shadow root attached to this element. */
+  shadow?: NodeSpec[];
 }
 
 /** Minimal DOM: enough layout, styles and hit testing for the overlay scan to run unmodified. */
 function fakeOverlayPage(tree: NodeSpec[], vw: number, vh: number, hostname = "shop.test") {
   const all: any[] = [];
-  const build = (spec: NodeSpec, parent: any): any => {
+  const isControl = (d: any) =>
+    ["BUTTON", "A"].includes(d.tagName) ||
+    d.getAttribute("role") === "button" ||
+    d.getAttribute("aria-label") !== null ||
+    (d.tagName === "INPUT" && ["button", "submit"].includes(d.getAttribute("type")));
+  const hitAmong = (nodes: any[], x: number, y: number) => {
+    let best: any = null;
+    for (const n of nodes) {
+      const r = n.getBoundingClientRect();
+      if (n.style.display === "none" || x < r.left || x >= r.right || y < r.top || y >= r.bottom) continue;
+      if (!best || n.z >= best.z) best = n;
+    }
+    return best;
+  };
+  const build = (spec: NodeSpec, parent: any, shadowRoot: any = null): any => {
     const node: any = {
       tagName: spec.tag.toUpperCase(),
       id: spec.attrs?.id ?? "",
       className: spec.attrs?.class ?? "",
       parent,
+      parentElement: parent,
+      parentNode: parent ?? shadowRoot,
+      host: shadowRoot?.host ?? parent?.host ?? null,
       style: { position: spec.position ?? "static", display: spec.display ?? "block", visibility: "visible", opacity: "1" },
       getAttribute: (n: string) => spec.attrs?.[n] ?? null,
       get innerText(): string {
         return [spec.text ?? "", ...node.children.map((c: any) => c.innerText)].filter(Boolean).join(" ");
       },
       get z(): number {
-        return spec.z ?? parent?.z ?? 0;
+        return spec.z ?? (parent ?? shadowRoot?.host)?.z ?? 0;
       },
       getBoundingClientRect() {
         const [x, y, w, h] = spec.rect ?? [0, 0, 0, 0];
@@ -147,33 +166,32 @@ function fakeOverlayPage(tree: NodeSpec[], vw: number, vh: number, hostname = "s
         for (let n = other; n; n = n.parent) if (n === node) return true;
         return false;
       },
+      matches: () => isControl(node),
       getElementsByTagName: (t: string) => node.descendants().filter((d: any) => t === "*" || d.tagName === t.toUpperCase()),
       querySelectorAll(sel: string) {
-        if (sel === "*") return node.descendants();
-        return node.descendants().filter(
-          (d: any) =>
-            ["BUTTON", "A"].includes(d.tagName) ||
-            d.getAttribute("role") === "button" ||
-            d.getAttribute("aria-label") !== null ||
-            (d.tagName === "INPUT" && ["button", "submit"].includes(d.getAttribute("type"))),
-        );
+        return sel === "*" ? node.descendants() : node.descendants().filter(isControl);
       },
     };
     all.push(node);
-    node.children = (spec.children ?? []).map((c) => build(c, node));
+    node.children = (spec.children ?? []).map((c) => build(c, node, shadowRoot));
+    if (spec.shadow) {
+      const root: any = { host: node };
+      root.children = spec.shadow.map((c) => build(c, null, root));
+      const inside = () => root.children.flatMap((c: any) => [c, ...c.descendants()]);
+      root.querySelectorAll = (sel: string) => (sel === "*" ? inside() : inside().filter(isControl));
+      root.elementFromPoint = (x: number, y: number) => hitAmong(inside(), x, y);
+      node.shadowRoot = root;
+    }
     return node;
   };
   const body = build({ tag: "body", rect: [0, 0, vw, vh], children: tree }, null);
   const document = {
     body,
     elementFromPoint(x: number, y: number) {
-      let best: any = null;
-      for (const n of all) {
-        const r = n.getBoundingClientRect();
-        if (n.style.display === "none" || x < r.left || x >= r.right || y < r.top || y >= r.bottom) continue;
-        if (!best || n.z >= best.z) best = n;
-      }
-      return best;
+      let hit = hitAmong(all, x, y);
+      // Like a real browser, hits inside a shadow tree are reported as the shadow host.
+      while (hit?.host) hit = hit.host;
+      return hit;
     },
   };
   return vm.createContext({
@@ -284,4 +302,135 @@ test("no source file passes a TypeScript function to page.evaluate", () => {
   };
   walk(new URL("../src", import.meta.url).pathname);
   assert.deepEqual(offenders, []);
+});
+
+const scanPage = (tree: NodeSpec[], vw = 390, vh = 844) =>
+  JSON.parse(JSON.stringify(vm.runInContext(scripts.OVERLAY_SCAN_PAGE_SCRIPT, fakeOverlayPage(tree, vw, vh))));
+const kinds = (r: any) => r.overlays.map((o: any) => o.kind);
+const controls = (o: any) => o.controls.map((c: any) => [c.label, c.intent, c.hitTestOk]);
+
+test("Kosas-style page: a cookie banner that is not fixed-positioned is still found next to the promo", () => {
+  const r = scanPage([
+    { tag: "main", rect: [0, 0, 390, 2000], text: "Revealer Concealer" },
+    {
+      tag: "div",
+      attrs: { role: "dialog", "aria-modal": "true" },
+      position: "fixed",
+      z: 10,
+      rect: [20, 120, 350, 480],
+      text: "Reveal Your Reward. Enter your email address",
+      children: [{ tag: "button", attrs: { "aria-label": "Close" }, rect: [330, 130, 30, 30] }],
+    },
+    {
+      tag: "section",
+      attrs: { id: "shopify-pc__banner", class: "shopify-pc__banner__dialog" },
+      position: "absolute",
+      z: 5,
+      rect: [0, 664, 390, 180],
+      text: "This website uses cookies to ensure you get the best experience.",
+      children: [
+        { tag: "button", text: "Preferences", rect: [10, 790, 110, 40] },
+        { tag: "button", text: "Decline", rect: [140, 790, 110, 40] },
+        { tag: "button", text: "Accept", rect: [270, 790, 110, 40] },
+      ],
+    },
+  ]);
+  assert.deepEqual(kinds(r), ["promotional", "consent"]);
+  assert.deepEqual(controls(r.overlays[1]), [
+    ["Decline", "decline", true],
+    ["Accept", "accept", true],
+  ]);
+});
+
+test("a zero-size fixed wrapper does not hide the cookie banner inside it", () => {
+  const r = scanPage([
+    { tag: "main", rect: [0, 0, 390, 2000], text: "Product" },
+    {
+      tag: "div",
+      position: "fixed",
+      rect: [0, 844, 0, 0],
+      children: [
+        {
+          tag: "div",
+          position: "absolute",
+          z: 5,
+          rect: [0, 724, 390, 120],
+          text: "We use cookies for analytics and advertising.",
+          children: [{ tag: "button", text: "Reject optional cookies", rect: [20, 790, 170, 40] }],
+        },
+      ],
+    },
+  ]);
+  assert.deepEqual(kinds(r), ["consent"]);
+  assert.deepEqual(controls(r.overlays[0]), [["Reject optional cookies", "decline", true]]);
+});
+
+test("a cookie banner inside an open shadow root is found and its controls are pressable", () => {
+  const r = scanPage([
+    { tag: "main", rect: [0, 0, 390, 2000], text: "Product" },
+    {
+      tag: "cookie-banner",
+      rect: [0, 0, 0, 0],
+      shadow: [
+        {
+          tag: "div",
+          position: "fixed",
+          z: 5,
+          rect: [0, 724, 390, 120],
+          text: "This site uses cookies.",
+          children: [
+            { tag: "button", text: "Necessary only", rect: [20, 790, 150, 40] },
+            { tag: "button", attrs: { "aria-label": "Close cookie banner" }, rect: [350, 730, 30, 30] },
+          ],
+        },
+      ],
+    },
+  ]);
+  assert.deepEqual(kinds(r), ["consent"]);
+  assert.deepEqual(controls(r.overlays[0]), [
+    ["Necessary only", "decline", true],
+    ["Close cookie banner", "close", true],
+  ]);
+});
+
+test("a fixed container holding both a promo and a cookie banner is reported as two overlays", () => {
+  const r = scanPage([
+    { tag: "main", rect: [0, 0, 390, 2000], text: "Product" },
+    {
+      tag: "div",
+      position: "fixed",
+      rect: [0, 0, 390, 844],
+      children: [
+        {
+          tag: "div",
+          attrs: { role: "dialog" },
+          z: 10,
+          rect: [20, 120, 350, 480],
+          text: "Get 15% off your first order",
+          children: [{ tag: "button", text: "×", rect: [330, 130, 30, 30] }],
+        },
+        {
+          tag: "div",
+          position: "fixed",
+          z: 5,
+          rect: [0, 724, 390, 120],
+          text: "We use cookies.",
+          children: [{ tag: "button", text: "Reject all", rect: [20, 790, 150, 40] }],
+        },
+      ],
+    },
+  ]);
+  assert.deepEqual(kinds(r), ["promotional", "consent"]);
+});
+
+test("ordinary page content mentioning cookies is not treated as an overlay", () => {
+  const r = scanPage([
+    {
+      tag: "section",
+      attrs: { class: "cookie-policy" },
+      rect: [0, 0, 390, 600],
+      text: "Our cookie policy explains how we use cookies.",
+    },
+  ]);
+  assert.deepEqual(r.overlays, []);
 });

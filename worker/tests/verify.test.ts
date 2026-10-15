@@ -48,7 +48,7 @@ function row(slot: string, viewport: "desktop" | "mobile", overrides: Partial<St
 }
 
 function dismissal(status: DismissalResult["status"], remaining: DismissalResult["remainingOverlays"] = []): DismissalResult {
-  return { status, initialOverlays: remaining, actions: [], remainingOverlays: remaining, error: status === "error" ? "boom" : null };
+  return { status, initialOverlays: remaining, actions: [], removedOverlays: [], remainingOverlays: remaining, error: status === "error" ? "boom" : null };
 }
 
 function states(d: DismissalResult, shot: string | null, after: string | null) {
@@ -164,4 +164,25 @@ test("overlays left in place, navigation and errors pass but are flagged for rev
   assert.match(report.warnings.join("\n"), /still visible .*partially_dismissed.*promotional "Get 15% off"/);
   assert.match(report.warnings.join("\n"), /navigated away/);
   assert.match(report.warnings.join("\n"), /errored: boom/);
+});
+
+test("a page cannot be marked all_dismissed while an overlay is still visible", async () => {
+  const rows = fullSet().map((r) =>
+    r.page_slot === "pdp_1" && r.viewport_name === "mobile"
+      ? { ...r, overlay_dismissal_status: "all_dismissed" as const, capture_states: states(dismissal("all_dismissed", [promo]), r.screenshot_path, r.unobstructed_screenshot_path) }
+      : r,
+  );
+  const report = await verifyEvidence(rows, domains, allExist);
+  assert.equal(report.allChecksPassed, false);
+  assert.match(report.checks.flatMap((c) => c.problems).join("\n"), /marked all_dismissed but overlays were still visible/);
+});
+
+test("a partially dismissed page still needs its after-dismissal screenshot", async () => {
+  const rows = fullSet().map((r) =>
+    r.page_slot === "pdp_1" && r.viewport_name === "mobile"
+      ? { ...r, overlay_dismissal_status: "partially_dismissed" as const, unobstructed_screenshot_path: null, capture_states: states(dismissal("partially_dismissed", [promo]), r.screenshot_path, null) }
+      : r,
+  );
+  const report = await verifyEvidence(rows, domains, allExist);
+  assert.match(report.checks.flatMap((c) => c.problems).join("\n"), /pdp_1\/mobile.*no after-dismissal screenshot/);
 });

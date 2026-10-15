@@ -45,27 +45,39 @@ The full-page JPEG is taken after the dismissal attempt (`page_type_signals.full
 How dismissal works:
 
 - A read-only scan finds fixed, sticky or dialog layers in the viewport (including sign-up iframes such as
-  SMS pop-ups) and classifies them as `consent`, `promotional` or `other`.
+  SMS pop-ups) and classifies them as `consent`, `promotional` or `other`. Known cookie-banner containers
+  (OneTrust, Cookiebot, Shopify's privacy banner and similar) are found wherever they are positioned, as are
+  banners inside zero-size fixed wrappers or open shadow roots. A container holding both a promo and a
+  cookie banner is reported as two overlays.
 - Only real, visible controls are used, pressed with a real click (desktop) or tap (mobile) at the control's
   position. A control is pressed only if it is actually on top at that point; if another layer covers it,
   it is recorded as `control_obscured` and left alone.
-- Order of preference: for consent, decline / reject, then close, and accept only as a last resort; for
-  promotions, close, then "no thanks". Sign-up, subscribe, settings and similar buttons are never pressed.
+- Order of preference: for consent, decline / reject / "necessary only", then close; for promotions,
+  close, then "no thanks". **Accept is never pressed**, so optional cookies are never accepted
+  automatically: a banner that only offers accept is left in place and recorded as `accept_only`. Sign-up,
+  subscribe, settings and similar buttons are never pressed.
 - Nothing is hidden or removed with CSS or scripts, and no access restriction is bypassed.
-- Each overlay gets one attempt. If a control loads a different page, the worker stops and records
-  `navigated_away` (no unobstructed screenshot exists in that case).
+- Each overlay gets one attempt, and the page is rescanned after every attempt. When nothing seems left, the
+  worker waits and rescans once more, so overlays that appear late (or were hidden behind another one) are
+  handled or reported. The status comes from that final rescan: `all_dismissed` only if it finds nothing;
+  if anything remains it is `partially_dismissed` (something was closed) or `not_dismissed`.
+- If a control loads a different page, the worker stops and records `navigated_away` (no unobstructed
+  screenshot exists in that case). In every other case, including partial and failed dismissal, both the
+  initial and after-dismissal screenshots are kept.
 
 Stored in `page_evidence`:
 
 - `overlay_dismissal_status`: `none_detected`, `all_dismissed`, `partially_dismissed`, `not_dismissed`,
   `navigated_away` or `error`.
 - `capture_states`: a list of exactly two entries, `initial_viewport` first. Each lists its screenshot, timestamp
-  and the overlays visible in it. The second also lists every action: which overlay, whether it was there at
-  first or appeared later, which control was pressed and how, and the outcome (`dismissed`, `still_visible`,
-  `navigated_away`, `control_obscured`, `no_dismiss_control_found`, `attempt_limit_reached`).
+  and the overlays visible in it. The second also has `overlays_removed` (closed by a pressed control) and
+  `overlays_visible` (still found by the final rescan), and lists every action: which overlay, whether it was
+  there at first or appeared later, which control was pressed and how, and the outcome (`dismissed`,
+  `still_visible`, `navigated_away`, `control_obscured`, `accept_only`, `no_dismiss_control_found`,
+  `attempt_limit_reached`).
 
-The report shows both screenshots per page and an "Overlays" section per site. Overlays that could not be
-closed are listed as review warnings. Dismissal adds a few seconds per viewport to session time (and so to
+The report shows both screenshots per page and, for each, which overlays were removed and which are still
+visible. Overlays that could not be closed are listed as review warnings. Dismissal adds a few seconds per viewport to session time (and so to
 the cost estimate).
 
 ## Selected test sites
@@ -234,6 +246,7 @@ The report runs five integrity checks:
 4. Each site has exactly one record per required page and viewport.
 5. Every capture records both states, `initial_viewport` first and pointing at the original screenshot, plus
    a dismissal status and an after-dismissal screenshot (unless the control navigated away or dismissal errored).
+   A page marked `all_dismissed` or `none_detected` must have no overlays left in its after-dismissal state.
 
 It also warns about off-site redirects, about product pages that were identified by URL only (no product
 markup or add-to-cart control detected), and about overlays still visible after the dismissal attempt,
@@ -271,6 +284,7 @@ duration and converts it with that rule:
   be missed (`none_detected` does not mean the page had none; check the initial screenshot), and a
   non-overlay sticky element could occasionally be listed. Overlays inside closed shadow DOM or cross-origin
   iframes that don't respond in time can't be inspected.
-- Accepting cookies (last resort) can change what loads afterwards, such as personalisation or tracking scripts;
-  the action is recorded so the after state can be read with that in mind.
+- Cookies are never accepted, so on sites whose banner has no reject or close control the after-dismissal
+  screenshot still shows the banner (`partially_dismissed` or `not_dismissed`). Declining cookies can still
+  change what loads afterwards; the action is recorded so the after state can be read with that in mind.
 - One worker process at a time is the tested configuration, although job claiming is safe for several.

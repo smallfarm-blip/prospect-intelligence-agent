@@ -1,4 +1,5 @@
 import type { CostSummary, LocalImage, RunReportInput } from "./report.ts";
+import { removedIn, type OverlaySummary } from "./overlays.ts";
 import type { StoredEvidence } from "./store.ts";
 import { orderEvidence } from "./verify.ts";
 
@@ -63,17 +64,18 @@ function overlayDetails(e: StoredEvidence): string {
   const after = e.capture_states?.find((s) => s.state === "after_overlay_dismissal");
   const initial = e.capture_states?.find((s) => s.state === "initial_viewport");
   if (!after || !initial) return "";
+  const names = (list: OverlaySummary[]) => list.map((o) => `<b>${esc(o.kind)}</b> “${esc(o.label.slice(0, 80) || o.tag)}”`).join("; ") || "none";
+  const outcome = `<ul class="actions"><li>${badge("ok", "removed")} ${names(removedIn(after))}</li><li>${badge(after.overlays_visible.length ? "bad" : "ok", "still visible")} ${names(after.overlays_visible)}</li></ul>`;
   const items = [
     ...(after.actions ?? []).map((a) => {
       const how = a.control ? `${a.method} "${a.control.label}" (${a.control.intent})` : "not pressed";
       return `<li>${badge(a.outcome === "dismissed" ? "ok" : a.outcome === "navigated_away" ? "warn" : "bad", a.outcome.replace(/_/g, " "))} <b>${esc(a.overlay.kind)}</b> “${esc(a.overlay.label.slice(0, 80) || a.overlay.tag)}” (${esc(a.firstSeen)}): ${esc(how)}. <span class="sub">${esc(a.detail)}</span></li>`;
     }),
-    ...after.overlays_visible.map((o) => `<li>${badge("bad", "still visible")} <b>${esc(o.kind)}</b> “${esc(o.label.slice(0, 80) || o.tag)}”</li>`),
     ...(after.error ? [`<li>${badge("bad", "error")} ${esc(after.error)}</li>`] : []),
   ];
   const summary = `${initial.overlays_visible.length} overlay(s) at first visit`;
   return `<details${e.overlay_dismissal_status === "none_detected" ? "" : " open"}><summary>${esc(summary)}</summary>
-<p class="sub">${esc(after.note)}</p>${items.length ? `<ul class="actions">${items.join("")}</ul>` : ""}</details>`;
+<p class="sub">${esc(after.note)}</p>${e.overlay_dismissal_status === "none_detected" ? "" : outcome}${items.length ? `<ul class="actions">${items.join("")}</ul>` : ""}</details>`;
 }
 
 function viewportBlock(e: StoredEvidence, image: LocalImage): string {

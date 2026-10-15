@@ -47,6 +47,7 @@ export type DismissalOutcome =
   | "navigated_away"
   | "no_dismiss_control_found"
   | "control_obscured"
+  | "accept_only"
   | "attempt_limit_reached";
 
 export interface DismissalAction {
@@ -64,6 +65,9 @@ export interface DismissalResult {
   status: DismissalStatus;
   initialOverlays: OverlaySummary[];
   actions: DismissalAction[];
+  /** Overlays closed by a pressed control and absent from the final verification scan. */
+  removedOverlays: OverlaySummary[];
+  /** Everything the final verification scan still found on screen. */
   remainingOverlays: OverlaySummary[];
   error: string | null;
 }
@@ -77,8 +81,8 @@ export interface OverlayDriver {
 }
 
 const INTENT_ORDER: Record<OverlayKind, ControlIntent[]> = {
-  // Prefer refusing optional tracking; accept is the last resort for consent only.
-  consent: ["decline", "close", "accept"],
+  // Accept is never pressed: the collector must not opt the session into optional cookies.
+  consent: ["decline", "close"],
   promotional: ["close", "decline"],
   other: ["close", "decline"],
 };
@@ -125,9 +129,10 @@ function statusOf(initial: DetectedOverlay[], actions: DismissalAction[], remain
 }
 
 /**
- * Tries to clear overlays the way a visitor would: by pressing a visible close, decline or
- * consent control that is actually on top at its position. Never hides or removes elements.
- * Each overlay gets one attempt; anything left is recorded with the reason.
+ * Tries to clear overlays the way a visitor would: by pressing a visible close or decline
+ * control that is actually on top at its position. Never hides or removes elements and never
+ * accepts cookies. Each overlay gets one attempt; after the last one the page is rescanned once
+ * more so overlays that appear late or were missed are reported as remaining.
  */
 export async function dismissOverlays(
   driver: OverlayDriver,
@@ -143,26 +148,29 @@ export async function dismissOverlays(
   const isSettled = (o: DetectedOverlay) => settled.some((s) => sameOverlay(s, o));
   let current = initial;
   let attempts = 0;
+  let verified = false;
+  let verifications = 0;
 
   while (true) {
     const open = current.filter((o) => !isSettled(o));
-    if (!open.length) break;
+    if (!open.length) {
+      if (verified || verifications > maxActions) break;
+      await driver.wait(settleMs);
+      current = await driver.scan();
+      verified = true;
+      verifications++;
+      continue;
+    }
     const target = open.find((o) => chooseControl(o));
 
     if (!target || attempts >= maxActions) {
       for (const o of open) {
-        const blocked = o.controls.some((c) => INTENT_ORDER[o.kind].includes(c.intent));
-        const outcome: DismissalOutcome = target ? "attempt_limit_reached" : blocked ? "control_obscured" : "no_dismiss_control_found";
-        const detail =
-          outcome === "attempt_limit_reached"
-            ? `Stopped after ${maxActions} dismissal attempts`
-            : outcome === "control_obscured"
-              ? "A dismiss control exists but another layer covers it, so a visitor could not press it"
-              : "No visible close, decline or consent control was found; the overlay was left in place";
-        actions.push({ overlay: summarize(o), firstSeen: firstSeen(o), control: null, method: null, outcome, detail });
+        const outcome = target ? "attempt_limit_reached" : unpressableOutcome(o);
+        actions.push({ overlay: summarize(o), firstSeen: firstSeen(o), control: null, method: null, outcome, detail: OUTCOME_DETAIL[outcome](maxActions) });
         settled.push(o);
       }
-      break;
+      verified = false;
+      continue;
     }
 
     const control = chooseControl(target)!;
@@ -180,7 +188,7 @@ export async function dismissOverlays(
 
     if (driver.currentUrl() !== startUrl) {
       actions.push({ ...action, outcome: "navigated_away", detail: `Pressing the control loaded ${driver.currentUrl()}; later state is not the original page` });
-      return { status: "navigated_away", initialOverlays: initial.map(summarize), actions, remainingOverlays: [], error: null };
+      return { status: "navigated_away", initialOverlays: initial.map(summarize), actions, removedOverlays: [], remainingOverlays: [], error: null };
     }
 
     let after = await driver.scan();
@@ -197,22 +205,42 @@ export async function dismissOverlays(
     }
     actions.push(action);
     current = after;
+    verified = false;
   }
 
+  const removed = actions.filter((a) => a.outcome === "dismissed" && !current.some((o) => sameOverlay(o, a.overlay))).map((a) => a.overlay);
   return {
     status: statusOf(initial, actions, current),
     initialOverlays: initial.map(summarize),
     actions,
+    removedOverlays: removed,
     remainingOverlays: current.map(summarize),
     error: null,
   };
 }
+
+type UnpressableOutcome = "attempt_limit_reached" | "control_obscured" | "accept_only" | "no_dismiss_control_found";
+
+function unpressableOutcome(o: DetectedOverlay): UnpressableOutcome {
+  if (o.controls.some((c) => INTENT_ORDER[o.kind].includes(c.intent))) return "control_obscured";
+  if (o.kind === "consent" && o.controls.some((c) => c.intent === "accept")) return "accept_only";
+  return "no_dismiss_control_found";
+}
+
+const OUTCOME_DETAIL: Record<UnpressableOutcome, (maxActions: number) => string> = {
+  attempt_limit_reached: (n) => `Stopped after ${n} dismissal attempts`,
+  control_obscured: () => "A close or decline control exists but another layer covers it, so a visitor could not press it",
+  accept_only: () => "Only an accept control was found. Optional cookies are never accepted automatically, so the banner was left in place",
+  no_dismiss_control_found: () => "No visible close or decline control was found; the overlay was left in place",
+};
 
 export interface CaptureState {
   state: "initial_viewport" | "after_overlay_dismissal";
   screenshot_path: string | null;
   captured_at: string | null;
   overlays_visible: OverlaySummary[];
+  /** After-dismissal state only: overlays a pressed control closed. Absent on rows recorded before this field existed. */
+  overlays_removed?: OverlaySummary[];
   dismissal_status?: DismissalStatus;
   actions?: DismissalAction[];
   error?: string | null;
@@ -221,9 +249,9 @@ export interface CaptureState {
 
 const AFTER_NOTES: Record<DismissalStatus, string> = {
   none_detected: "No overlays were detected, so nothing was pressed; this screenshot shows the same page moments later. Detection is heuristic, so review the initial screenshot too.",
-  all_dismissed: "Every detected overlay was closed with its own visible control.",
-  partially_dismissed: "Some overlays were closed; the rest are listed in overlays_visible with the reason they remain.",
-  not_dismissed: "No detected overlay could be closed with a visible control; overlays_visible lists what remains and why.",
+  all_dismissed: "Every detected overlay was closed with its own visible control, and a final rescan found none remaining.",
+  partially_dismissed: "Some overlays were closed (overlays_removed); a final rescan still found the ones in overlays_visible, so this screenshot is not fully unobstructed.",
+  not_dismissed: "No detected overlay could be closed with a visible close or decline control; overlays_visible lists what remains and actions say why.",
   navigated_away: "Pressing an overlay control loaded a different page, so no post-dismissal screenshot of the original page exists.",
   error: "Overlay dismissal failed with an error; see error.",
 };
@@ -247,10 +275,16 @@ export function buildCaptureStates(
       screenshot_path: after.path,
       captured_at: after.at,
       overlays_visible: dismissal.remainingOverlays,
+      overlays_removed: dismissal.removedOverlays,
       dismissal_status: dismissal.status,
       actions: dismissal.actions,
       error: dismissal.error,
       note: AFTER_NOTES[dismissal.status],
     },
   ];
+}
+
+/** Overlays the after-dismissal state records as closed; older rows only have the actions to go on. */
+export function removedIn(after: CaptureState): OverlaySummary[] {
+  return after.overlays_removed ?? (after.actions ?? []).filter((a) => a.outcome === "dismissed").map((a) => a.overlay);
 }

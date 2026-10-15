@@ -54,6 +54,9 @@ function checkCaptureStates(r: StoredEvidence, where: string, problems: string[]
   if (expectsAfterShot && !r.unobstructed_screenshot_path) problems.push(`${where} has no after-dismissal screenshot`);
   if (after.screenshot_path !== r.unobstructed_screenshot_path) problems.push(`${where} after-dismissal state does not match the stored screenshot`);
 
+  if ((status === "all_dismissed" || status === "none_detected") && after.overlays_visible.length) {
+    problems.push(`${where} is marked ${status} but overlays were still visible after dismissal`);
+  }
   const remaining = after.overlays_visible.map((o) => `${o.kind} "${o.label.slice(0, 40)}"`).join("; ");
   if (status === "not_dismissed" || status === "partially_dismissed") warnings.push(`${where} overlays still visible after dismissal attempt (${status}): ${remaining}`);
   if (status === "navigated_away") warnings.push(`${where} an overlay control navigated away; no unobstructed screenshot`);

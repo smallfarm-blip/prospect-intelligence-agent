@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { loadEvidencePack, type EvidencePack } from "../src/analysis/evidence.ts";
-import { MockModelClient, ModelCallError, type ModelRequest } from "../src/analysis/model.ts";
-import { runAnalysis, type PipelineOptions } from "../src/analysis/pipeline.ts";
+import { MockModelClient, ModelCallError, type ModelClient, type ModelRequest } from "../src/analysis/model.ts";
+import { runAnalysis as runWithClients, type AnalysisSink, type PipelineOptions } from "../src/analysis/pipeline.ts";
 import { automaticChecks } from "../src/analysis/checks.ts";
 import { claimsOf } from "../src/analysis/claims.ts";
 import { costUsd, worstCaseUsd } from "../src/analysis/budget.ts";
@@ -15,6 +15,9 @@ async function pack(legacy = false): Promise<EvidencePack> {
   const row = evidenceRow("pdp_1", "mobile", legacy ? { capture_states: captureStates({ legacy: true }) } : {});
   return loadEvidencePack(await standardFixture([row]), { researchRunId: RUN, companyDomain: COMPANY.domain }, LIMITS);
 }
+
+/** These tests use one client for both roles; mixed-provider routing is covered in analysisProviders.test.ts. */
+const runAnalysis = (p: EvidencePack, client: ModelClient, sink: AnalysisSink, o: PipelineOptions) => runWithClients(p, { analyst: client, verifier: client }, sink, o);
 
 const opts = (over: Partial<PipelineOptions> = {}): PipelineOptions => ({ analyst: MODEL, verifier: VERIFIER, limits: PIPE_LIMITS, workerVersion: "test", revise: false, ...over });
 

@@ -4,6 +4,7 @@ import sharp from "sharp";
 /** Provider guidance: long edge at most ~1568 px and ~1.15 megapixels avoids server-side downscaling. */
 export const MAX_LONG_EDGE = 1568;
 export const MAX_PIXELS = 1_150_000;
+export const JPEG_QUALITY = 80;
 
 export interface Crop {
   x: number;
@@ -53,7 +54,7 @@ export async function prepareRegion(buf: Buffer, crop: Crop): Promise<PreparedPi
   const jpeg = await sharp(buf)
     .extract({ left: crop.x, top: crop.y, width: crop.width, height: crop.height })
     .resize(size.width, size.height, { fit: "fill" })
-    .jpeg({ quality: 80 })
+    .jpeg({ quality: JPEG_QUALITY })
     .toBuffer();
   return { jpeg, crop, scaledWidth: size.width, scaledHeight: size.height, estimatedTokens: estimateImageTokens(size.width, size.height) };
 }

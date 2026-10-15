@@ -65,7 +65,7 @@ export class AnalysisStore implements EvidenceSource, AnalysisSink {
           verifier_provider: row.verifier.provider,
           verifier_model: row.verifier.model,
           prompt_versions: row.prompt_versions,
-          config: { ...row.config, client: row.provider },
+          config: row.config,
           evidence_manifest: row.evidence_manifest,
           evidence_warnings: row.evidence_warnings,
           budget_usd: row.budget_usd,

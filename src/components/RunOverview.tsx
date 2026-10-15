@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { AlertTriangle, ChevronDown, Coins, Cpu, FileWarning, Layers } from 'lucide-react';
 import type { RunDetail } from '@/lib/types';
 import { Badge } from '@/components/ui';
-import { formatDate, humanize, usd } from '@/lib/format';
+import { formatDate, humanize, providerName, usd } from '@/lib/format';
+import { ModelSetup } from '@/components/ModelSetup';
 
 const CALL_TONE = { succeeded: 'success', invalid_output: 'warning', failed: 'error', refused_budget: 'warning' } as const;
 
@@ -31,6 +32,8 @@ export function RunOverview({ detail }: { detail: RunDetail }) {
   const { run, calls } = detail;
   const [showCalls, setShowCalls] = useState(false);
   const pct = run.budget_usd ? Math.min(100, (run.estimated_cost_usd / run.budget_usd) * 100) : 0;
+  const usage = run.config?.usage;
+  const callUsage = new Map((usage?.calls ?? []).map((u) => [u.call_id, u]));
 
   return (
     <section className="space-y-4">
@@ -52,12 +55,28 @@ export function RunOverview({ detail }: { detail: RunDetail }) {
           <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-ink-100">
             <div className={`h-full rounded-full transition-all ${pct > 90 ? 'bg-warning-500' : 'bg-primary-500'}`} style={{ width: `${pct}%` }} />
           </div>
-          <p className="mt-1 text-xs text-ink-500">of {usd(run.budget_usd, 2)} budget{run.billed_cost_usd != null ? ` / billed ${usd(run.billed_cost_usd)}` : ''}</p>
+          <p className="mt-1 text-xs text-ink-500">of {usd(run.budget_usd, 2)} budget</p>
+          <p className="mt-2 text-xs text-ink-500">
+            {run.billed_cost_usd != null ? `Billed: ${usd(run.billed_cost_usd)}` : 'Estimate from provider-reported tokens at configured prices. Not a bill.'}
+            {usage && usage.uncertain_billing_reserved_usd > 0 && ` Includes ${usd(usage.uncertain_billing_reserved_usd)} reserved for calls with unknown billing.`}
+          </p>
         </div>
-        <Stat icon={<Layers className="h-3.5 w-3.5" />} label="Tokens" value={(run.input_tokens + run.output_tokens).toLocaleString()} sub={`${run.input_tokens.toLocaleString()} in / ${run.output_tokens.toLocaleString()} out`} />
-        <Stat icon={<Cpu className="h-3.5 w-3.5" />} label="Model calls" value={String(run.model_call_count)} sub={`Analyst ${run.analyst_model} / verifier ${run.verifier_model}`} />
+        <Stat
+          icon={<Layers className="h-3.5 w-3.5" />}
+          label="Tokens"
+          value={(run.input_tokens + run.output_tokens).toLocaleString()}
+          sub={`${run.input_tokens.toLocaleString()} in / ${run.output_tokens.toLocaleString()} out${usage?.reasoning_tokens ? ` (${usage.reasoning_tokens.toLocaleString()} reasoning)` : ''}`}
+        />
+        <Stat
+          icon={<Cpu className="h-3.5 w-3.5" />}
+          label="Model calls"
+          value={String(run.model_call_count)}
+          sub={`${providerName(run.analyst_provider)} analyst / ${providerName(run.verifier_provider)} verifier`}
+        />
         <Stat icon={<FileWarning className="h-3.5 w-3.5" />} label="Findings" value={String(run.finding_count)} sub={Object.values(run.prompt_versions ?? {}).join(', ')} />
       </div>
+
+      <ModelSetup detail={detail} />
 
       {run.assessment_summary && (
         <div className="card p-5">
@@ -80,13 +99,17 @@ export function RunOverview({ detail }: { detail: RunDetail }) {
             <table className="w-full text-left text-sm">
               <thead className="bg-ink-50 text-xs uppercase tracking-wider text-ink-500">
                 <tr>
-                  {['Role', 'Finding', 'Status', 'Tokens in / out', 'Cost', 'Worst case', 'Time'].map((h) => <th key={h} className="px-4 py-2 font-medium">{h}</th>)}
+                  {['Role', 'Model', 'Finding', 'Status', 'Pre-call count', 'Tokens in / out', 'Reasoning', 'Est. cost', 'Worst case', 'Time'].map((h) => <th key={h} className="px-4 py-2 font-medium">{h}</th>)}
                 </tr>
               </thead>
               <tbody className="divide-y divide-ink-100">
                 {calls.map((c) => (
                   <tr key={c.id} className="align-top">
                     <td className="px-4 py-2 capitalize">{c.role}</td>
+                    <td className="px-4 py-2 text-xs">
+                      <span className="block text-ink-500">{providerName(c.provider)}</span>
+                      <span className="font-mono">{c.model}</span>
+                    </td>
                     <td className="px-4 py-2 font-mono text-xs">{c.finding_ref ?? '-'}</td>
                     <td className="px-4 py-2">
                       <Badge tone={CALL_TONE[c.status]}>{humanize(c.status)}</Badge>
@@ -97,7 +120,12 @@ export function RunOverview({ detail }: { detail: RunDetail }) {
                         </p>
                       )}
                     </td>
+                    <td className="px-4 py-2 tabular-nums text-ink-500">
+                      {c.counted_input_tokens ?? '-'}
+                      {callUsage.get(c.id)?.count_method === 'estimate' && <span className="block text-xs">local estimate</span>}
+                    </td>
                     <td className="px-4 py-2 tabular-nums">{c.input_tokens ?? '-'} / {c.output_tokens ?? '-'}</td>
+                    <td className="px-4 py-2 tabular-nums text-ink-500">{callUsage.get(c.id)?.reasoning_tokens ?? '-'}</td>
                     <td className="px-4 py-2 tabular-nums">{usd(c.estimated_cost_usd)}</td>
                     <td className="px-4 py-2 tabular-nums text-ink-500">{usd(c.worst_case_cost_usd)}</td>
                     <td className="px-4 py-2 tabular-nums text-ink-500">{c.latency_ms != null ? `${(c.latency_ms / 1000).toFixed(1)}s` : '-'}</td>

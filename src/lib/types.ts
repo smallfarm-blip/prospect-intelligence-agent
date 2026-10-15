@@ -43,6 +43,44 @@ export interface FindingContent {
   evidence_quality: 'strong' | 'adequate' | 'weak';
 }
 
+export interface RoleSettings {
+  provider: string;
+  model: string;
+  pricing: { inputUsdPerMTok: number; outputUsdPerMTok: number };
+  maxOutputTokens: number;
+  imageDetail?: string | null;
+  reasoningEffort?: string | null;
+  serviceTier?: string | null;
+}
+
+export interface CallUsage {
+  call_id: string;
+  role: ModelCall['role'];
+  count_method: 'provider' | 'estimate' | null;
+  reasoning_tokens: number | null;
+}
+
+/** Older runs predate some of these fields, so every part is optional. */
+export interface RunConfig {
+  analyst?: RoleSettings;
+  verifier?: RoleSettings;
+  images?: { maxLongEdge: number; maxPixels: number; jpegQuality: number };
+  usage?: {
+    calls: CallUsage[];
+    reasoning_tokens: number;
+    reported_usage_cost_usd: number;
+    uncertain_billing_reserved_usd: number;
+  };
+}
+
+export interface EvidenceManifest {
+  pages?: unknown[];
+  images?: Array<{ ref: string; estimatedTokens?: number }>;
+  unanalysed?: unknown[];
+  skipped?: unknown[];
+  warnings?: string[];
+}
+
 export interface AnalysisRun {
   id: string;
   research_run_id: string;
@@ -68,13 +106,17 @@ export interface AnalysisRun {
   started_at: string;
   ended_at: string | null;
   companies: { name: string; canonical_domain: string } | null;
+  config: RunConfig | null;
+  evidence_manifest: EvidenceManifest | null;
 }
 
 export interface ModelCall {
   id: string;
   role: 'analyst' | 'verifier' | 'revision';
   finding_ref: string | null;
+  provider: string;
   model: string;
+  counted_input_tokens: number | null;
   status: 'succeeded' | 'invalid_output' | 'failed' | 'refused_budget';
   input_tokens: number | null;
   output_tokens: number | null;

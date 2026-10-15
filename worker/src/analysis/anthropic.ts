@@ -1,4 +1,4 @@
-import { ModelCallError, type ModelClient, type ModelRequest, type ModelResponse } from "./model.ts";
+import { ModelCallError, postJson, type ModelClient, type ModelRequest, type ModelResponse, type TokenCount } from "./model.ts";
 
 const API_VERSION = "2023-06-01";
 
@@ -33,41 +33,14 @@ export class AnthropicClient implements ModelClient {
     };
   }
 
-  private async post(path: string, payload: unknown, timeoutMs: number): Promise<unknown> {
-    let res: Response;
-    try {
-      res = await fetch(`${this.opts.baseUrl.replace(/\/$/, "")}${path}`, {
-        method: "POST",
-        headers: { "content-type": "application/json", "x-api-key": this.opts.apiKey, "anthropic-version": API_VERSION },
-        body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(timeoutMs),
-      });
-    } catch (err) {
-      const name = (err as Error).name;
-      if (name === "TimeoutError" || name === "AbortError") throw new ModelCallError("timeout", `No response within ${timeoutMs} ms`);
-      throw new ModelCallError("network", `Network error: ${(err as Error).message}`);
-    }
-    const text = await res.text();
-    if (!res.ok) {
-      let detail = text.slice(0, 500);
-      try {
-        detail = (JSON.parse(text) as { error?: { message?: string } }).error?.message ?? detail;
-      } catch {
-        // keep raw text
-      }
-      throw new ModelCallError("http", `Provider returned ${res.status}: ${detail}`, res.status);
-    }
-    try {
-      return JSON.parse(text);
-    } catch {
-      throw new ModelCallError("malformed", "Provider response was not JSON");
-    }
+  private post(path: string, payload: unknown, timeoutMs: number) {
+    return postJson(`${this.opts.baseUrl.replace(/\/$/, "")}${path}`, { "x-api-key": this.opts.apiKey, "anthropic-version": API_VERSION }, payload, timeoutMs);
   }
 
-  async countInputTokens(req: ModelRequest): Promise<number> {
+  async countInputTokens(req: ModelRequest): Promise<TokenCount> {
     const data = (await this.post("/v1/messages/count_tokens", this.body(req), 60_000)) as { input_tokens?: unknown };
     if (typeof data.input_tokens !== "number") throw new ModelCallError("malformed", "Token count response had no input_tokens");
-    return data.input_tokens;
+    return { tokens: data.input_tokens, method: "provider" };
   }
 
   async complete(req: ModelRequest): Promise<ModelResponse> {
@@ -85,6 +58,7 @@ export class AnthropicClient implements ModelClient {
       toolInput: tool?.input ?? null,
       inputTokens: data.usage.input_tokens,
       outputTokens: data.usage.output_tokens,
+      reasoningTokens: null,
       stopReason: data.stop_reason ?? null,
       latencyMs: Date.now() - started,
     };

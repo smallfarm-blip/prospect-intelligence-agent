@@ -3,34 +3,54 @@ import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { createLogger } from "../logger.ts";
 import { AnalysisStore } from "./analysisStore.ts";
-import { AnthropicClient } from "./anthropic.ts";
 import { worstCaseUsd } from "./budget.ts";
-import { loadAnalysisConfig } from "./config.ts";
+import { createClients } from "./clients.ts";
+import { applySettingsProfile, loadAnalysisConfig, type ModelSettings } from "./config.ts";
 import { analystContent } from "./context.ts";
 import { loadEvidencePack } from "./evidence.ts";
 import { estimateInputTokens } from "./model.ts";
-import { runAnalysis } from "./pipeline.ts";
+import { ESTIMATE_SAFETY_FACTOR } from "./openai.ts";
+import { IMAGE_SETTINGS, runAnalysis } from "./pipeline.ts";
 import { ANALYST_SYSTEM } from "./prompts.ts";
 import { AnalystOutputSchema, toolSchema } from "./schemas.ts";
 
 const USAGE = `Usage:
-  npm run analyse -- --run <research run id or 8-char prefix> --company <domain>            (free: prepares evidence, prints estimate)
-  npm run analyse -- --run <id> --company <domain> --live [--revise]                         (PAID: calls the model)`;
+  npm run analyse -- --run <research run id or 8-char prefix> --company <domain> [--settings <profile>]            (free: prepares evidence, prints estimate)
+  npm run analyse -- --run <id> --company <domain> [--settings <profile>] --live [--revise]                         (PAID: calls the models)`;
+
+const describe = (s: ModelSettings) => ({
+  provider: s.provider,
+  model: s.model,
+  inputUsdPerMTok: s.pricing.inputUsdPerMTok,
+  outputUsdPerMTok: s.pricing.outputUsdPerMTok,
+  maxOutputTokens: s.maxOutputTokens,
+  imageDetail: s.imageDetail,
+  reasoningEffort: s.reasoningEffort,
+  serviceTier: s.serviceTier,
+});
 
 async function main(): Promise<number> {
   const { values } = parseArgs({
-    options: { run: { type: "string" }, company: { type: "string" }, live: { type: "boolean", default: false }, revise: { type: "boolean", default: false } },
+    options: {
+      run: { type: "string" },
+      company: { type: "string" },
+      settings: { type: "string" },
+      live: { type: "boolean", default: false },
+      revise: { type: "boolean", default: false },
+    },
   });
   if (!values.run || !values.company) {
     console.error(USAGE);
     return 2;
   }
-  const config = loadAnalysisConfig(process.env, { live: values.live });
+  const env = values.settings ? applySettingsProfile(process.env, readFileSync(resolve(values.settings), "utf8")) : process.env;
+  const config = loadAnalysisConfig(env, { live: values.live });
   const pkg = JSON.parse(readFileSync(resolve("package.json"), "utf8")) as { name: string; version: string };
   const logger = createLogger(join(resolve("output"), "analysis", `${new Date().toISOString().replace(/[:.]/g, "-")}.log.jsonl`));
   const store = new AnalysisStore(config.supabaseUrl, config.supabaseSecretKey);
   await store.preflight();
 
+  logger.log("info", "model_settings", { profile: values.settings ?? null, analyst: describe(config.analyst), verifier: describe(config.verifier), images: IMAGE_SETTINGS });
   const researchRunId = await store.resolveResearchRun(values.run);
   const pack = await loadEvidencePack(store, { researchRunId, companyDomain: values.company }, config.limits);
   const imageTokens = pack.images.reduce((s, i) => s + i.estimatedTokens, 0);
@@ -49,12 +69,13 @@ async function main(): Promise<number> {
     unanalysed: pack.unanalysed.length,
   });
   for (const w of pack.warnings) logger.log("warn", "evidence_warning", { warning: w });
-  const analystWorst = worstCaseUsd(config.analyst.pricing, estInput, config.limits.inputCountMargin, config.analyst.maxOutputTokens);
+  const analystInput = config.analyst.provider === "openai" ? Math.ceil(estInput * ESTIMATE_SAFETY_FACTOR) : estInput;
+  const analystWorst = worstCaseUsd(config.analyst.pricing, analystInput, config.limits.inputCountMargin, config.analyst.maxOutputTokens);
   logger.log("info", "estimate", {
-    analystInputTokensApprox: estInput,
+    analystInputTokensApprox: analystInput,
     analystWorstCaseUsd: analystWorst.toFixed(3),
     budgetUsd: config.limits.budgetUsd,
-    note: "Live runs count tokens with the provider before every call and refuse any call whose worst case would exceed the budget.",
+    note: "Rough local estimate. Live runs count tokens with the provider before every call and refuse any call whose worst case would exceed the budget. These are estimates, not billing.",
   });
 
   if (!values.live) {
@@ -62,8 +83,7 @@ async function main(): Promise<number> {
     return 0;
   }
 
-  const client = new AnthropicClient({ apiKey: config.anthropicApiKey, baseUrl: config.anthropicBaseUrl, timeoutMs: config.modelTimeoutMs });
-  const result = await runAnalysis(pack, client, store, {
+  const result = await runAnalysis(pack, createClients(config), store, {
     analyst: config.analyst,
     verifier: config.verifier,
     limits: config.limits,

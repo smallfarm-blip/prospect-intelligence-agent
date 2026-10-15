@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { Building2, ChevronRight } from 'lucide-react';
 import type { AnalysisRun } from '@/lib/types';
 import { Badge } from '@/components/ui';
-import { formatDate, usd } from '@/lib/format';
+import { formatDate, providerName, usd } from '@/lib/format';
 
 const STATUS_TONE = { completed: 'success', running: 'secondary', stopped_budget: 'warning', failed: 'error' } as const;
 
@@ -53,6 +53,11 @@ export function RunSidebar({ runs, companyId, runId, onCompany, onRun }: Props) 
                     <Badge tone={STATUS_TONE[r.status]}>{r.status.replace('_', ' ')}</Badge>
                   </div>
                   <p className="mt-2 text-sm font-medium text-ink-800">{formatDate(r.started_at)}</p>
+                  <p className="mt-0.5 truncate text-xs text-ink-600" title={`Analyst ${r.analyst_model} / verifier ${r.verifier_model}`}>
+                    {r.analyst_provider === r.verifier_provider
+                      ? `${providerName(r.analyst_provider)}: ${r.analyst_model}`
+                      : `${providerName(r.analyst_provider)} analyst + ${providerName(r.verifier_provider)} verifier`}
+                  </p>
                   <div className="mt-1 flex items-center justify-between text-xs text-ink-500">
                     <span>
                       {r.finding_count} finding{r.finding_count === 1 ? '' : 's'} / {usd(r.estimated_cost_usd, 2)}

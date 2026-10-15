@@ -5,7 +5,8 @@ import { BudgetTracker, costUsd, worstCaseUsd } from "./budget.ts";
 import { automaticChecks, combineVerdict, hasBlocker, resolveRef, type AutomaticCheck, type VerificationStatus } from "./checks.ts";
 import { claimsOf } from "./claims.ts";
 import { analystContent, revisionContent, verifierContent } from "./context.ts";
-import { ModelCallError, type CallRole, type ContentBlock, type ModelClient } from "./model.ts";
+import { JPEG_QUALITY, MAX_LONG_EDGE, MAX_PIXELS } from "./images.ts";
+import { ModelCallError, type CallRole, type ContentBlock, type ModelClients } from "./model.ts";
 import { ANALYST_SYSTEM, PROMPT_VERSIONS, REVISION_SYSTEM, VERIFIER_SYSTEM } from "./prompts.ts";
 import {
   AnalystOutputSchema,
@@ -84,7 +85,6 @@ export interface RunStart {
   company_id: string;
   analyst: ModelSettings;
   verifier: ModelSettings;
-  provider: string;
   prompt_versions: typeof PROMPT_VERSIONS;
   config: Record<string, unknown>;
   evidence_manifest: unknown;
@@ -104,6 +104,19 @@ export interface RunFinish {
   output_tokens: number;
   model_call_count: number;
   errors: string[];
+  /** The start config plus usage details that have no dedicated column. */
+  config: Record<string, unknown>;
+}
+
+/** Per-call details kept in the run config: how the pre-call count was made and reasoning-token usage. */
+export interface CallUsageDetail {
+  call_id: string;
+  role: CallRole;
+  finding_ref: string | null;
+  provider: string;
+  model: string;
+  count_method: "provider" | "estimate" | null;
+  reasoning_tokens: number | null;
 }
 
 /** Where an analysis is persisted. The Supabase implementation lives in analysisStore.ts. */
@@ -136,19 +149,30 @@ export interface PipelineResult {
 
 class BudgetStop extends Error {}
 
-export async function runAnalysis(pack: EvidencePack, client: ModelClient, sink: AnalysisSink, opts: PipelineOptions): Promise<PipelineResult> {
+export const IMAGE_SETTINGS = { maxLongEdge: MAX_LONG_EDGE, maxPixels: MAX_PIXELS, format: "jpeg", jpegQuality: JPEG_QUALITY } as const;
+
+export async function runAnalysis(pack: EvidencePack, clients: ModelClients, sink: AnalysisSink, opts: PipelineOptions): Promise<PipelineResult> {
   const log = opts.log ?? (() => {});
   const budget = new BudgetTracker(opts.limits.budgetUsd);
   const errors: string[] = [];
+  const usageDetails: CallUsageDetail[] = [];
+  let uncertainUsd = 0;
   let calls = 0;
+  const startConfig = {
+    limits: opts.limits,
+    analyst: opts.analyst,
+    verifier: opts.verifier,
+    revise: opts.revise,
+    images: IMAGE_SETTINGS,
+    clients: { analyst: clients.analyst.provider, verifier: clients.verifier.provider },
+  };
   const runId = await sink.createRun({
     research_run_id: pack.researchRunId,
     company_id: pack.company.id,
     analyst: opts.analyst,
     verifier: opts.verifier,
-    provider: client.provider,
     prompt_versions: PROMPT_VERSIONS,
-    config: { limits: opts.limits, analyst: opts.analyst, verifier: opts.verifier, revise: opts.revise },
+    config: startConfig,
     evidence_manifest: manifestOf(pack),
     evidence_warnings: pack.warnings,
     budget_usd: opts.limits.budgetUsd,
@@ -165,6 +189,7 @@ export async function runAnalysis(pack: EvidencePack, client: ModelClient, sink:
     schema: z.ZodType<T>,
     extraValidation: (out: T) => string[] = () => [],
   ): Promise<{ output: T | null; callId: string; status: CallStatus }> {
+    const client = role === "verifier" ? clients.verifier : clients.analyst;
     const promptVersion = PROMPT_VERSIONS[role];
     const req = {
       role,
@@ -181,9 +206,11 @@ export async function runAnalysis(pack: EvidencePack, client: ModelClient, sink:
       prompt_version: promptVersion,
       max_output_tokens: settings.maxOutputTokens,
     };
-    const record = async (r: Omit<CallRecord, keyof typeof base | "status">, status: CallStatus) => {
+    let countMethod: CallUsageDetail["count_method"] = null;
+    const record = async (r: Omit<CallRecord, keyof typeof base | "status">, status: CallStatus, reasoningTokens: number | null = null) => {
       calls++;
       const id = await sink.recordCall(runId, { ...base, ...r, status });
+      usageDetails.push({ call_id: id, role, finding_ref: findingRef, provider: client.provider, model: settings.model, count_method: countMethod, reasoning_tokens: reasoningTokens });
       log("model_call", { role, finding: findingRef, status, cost: r.estimated_cost_usd.toFixed(4), spent: budget.spentUsd.toFixed(4) });
       return id;
     };
@@ -191,7 +218,9 @@ export async function runAnalysis(pack: EvidencePack, client: ModelClient, sink:
 
     let counted: number;
     try {
-      counted = await client.countInputTokens(req);
+      const count = await client.countInputTokens(req);
+      counted = count.tokens;
+      countMethod = count.method;
     } catch (err) {
       const id = await record({ ...empty, counted_input_tokens: null, worst_case_cost_usd: null, estimated_cost_usd: 0, error: `Token count failed: ${(err as Error).message}` }, "failed");
       return { output: null, callId: id, status: "failed" };
@@ -229,11 +258,14 @@ export async function runAnalysis(pack: EvidencePack, client: ModelClient, sink:
         } else problems = formatIssues(parsed.error);
       }
       const status: CallStatus = output ? "succeeded" : "invalid_output";
-      const id = await record({ ...usage, output: res.toolInput ?? null, validation_errors: problems, error: null }, status);
+      const id = await record({ ...usage, output: res.toolInput ?? null, validation_errors: problems, error: null }, status, res.reasoningTokens);
       return { output, callId: id, status };
     } catch (err) {
       const e = err instanceof ModelCallError ? err : new ModelCallError("network", (err as Error).message);
-      if (e.possiblyBilled) budget.recordUncertain(worst);
+      if (e.possiblyBilled) {
+        budget.recordUncertain(worst);
+        uncertainUsd += worst;
+      }
       const note = e.possiblyBilled ? " Billing unknown; the worst case was counted against the budget." : "";
       const id = await record(
         { ...empty, counted_input_tokens: counted, worst_case_cost_usd: worst, estimated_cost_usd: e.possiblyBilled ? worst : 0, error: `${e.kind}: ${e.message}.${note}` },
@@ -334,6 +366,16 @@ export async function runAnalysis(pack: EvidencePack, client: ModelClient, sink:
     output_tokens: budget.outputTokens,
     model_call_count: calls,
     errors,
+    config: {
+      ...startConfig,
+      usage: {
+        calls: usageDetails,
+        reasoning_tokens: usageDetails.reduce((s, u) => s + (u.reasoning_tokens ?? 0), 0),
+        reported_usage_cost_usd: budget.spentUsd - uncertainUsd,
+        uncertain_billing_reserved_usd: uncertainUsd,
+        note: "Costs are estimates from provider-reported tokens at configured prices. Calls with unknown billing are counted at their worst case. Check the provider's billing dashboard for billed amounts.",
+      },
+    },
   });
   return { analysisRunId: runId, status, findings, spentUsd: budget.spentUsd, calls, errors };
 }

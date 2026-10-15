@@ -40,8 +40,10 @@ test("forces a single tool call, sends images as base64 and returns usage", asyn
     if (url.endsWith("/count_tokens")) return Response.json({ input_tokens: 1234 });
     return Response.json({ content: [{ type: "tool_use", name: "submit_analyst_result", input: { ok: true } }], usage: { input_tokens: 1200, output_tokens: 300 }, stop_reason: "tool_use" });
   });
-  assert.equal(await client().countInputTokens(req), 1234);
+  assert.deepEqual(await client().countInputTokens(req), { tokens: 1234, method: "provider" });
+  assert.equal((await client().complete(req)).reasoningTokens, null);
   const res = await client().complete(req);
+  seen.splice(1, 1);
   assert.deepEqual(res.toolInput, { ok: true });
   assert.equal(res.inputTokens, 1200);
   assert.equal(res.outputTokens, 300);
@@ -80,6 +82,6 @@ test("live mode requires an API key; dry runs do not", () => {
   const cfg = loadAnalysisConfig(env, { live: false });
   assert.equal(cfg.analyst.model, "claude-sonnet-5-5");
   assert.equal(cfg.limits.budgetUsd, 2.5);
-  assert.equal(loadAnalysisConfig({ ...env, ANALYST_MODEL: "other-model", ANALYSIS_BUDGET_USD: "1" }, { live: false }).analyst.model, "other-model");
+  assert.equal(loadAnalysisConfig({ ...env, ANALYST_MODEL: "other-model", ANALYST_INPUT_USD_PER_MTOK: "3", ANALYST_OUTPUT_USD_PER_MTOK: "15", ANALYSIS_BUDGET_USD: "1" }, { live: false }).analyst.model, "other-model");
   assert.throws(() => new AnthropicClient({ apiKey: "", baseUrl: "x", timeoutMs: 1 }), /ANTHROPIC_API_KEY/);
 });

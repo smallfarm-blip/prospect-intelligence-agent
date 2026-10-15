@@ -305,7 +305,27 @@ Phase 1 reads evidence already stored by Phase 0 and never visits a website. It 
 
 ## Budget
 
-The budget (default $2.50) is enforced before each call: the worst-case cost of the call (provider-counted input tokens plus a margin, plus the maximum output tokens) must fit in what remains, otherwise the call is refused and the run ends as `stopped_budget`. If a call fails in a way where billing is unknown (timeout, network error, server error, malformed reply), its worst case is counted as spent. Costs shown are estimates from token usage and configured prices; check the Anthropic console for billed amounts.
+The budget (default $2.50) is enforced before each call: the worst-case cost of the call (provider-counted input tokens plus a margin, plus the maximum output tokens) must fit in what remains, otherwise the call is refused and the run ends as `stopped_budget`. If a call fails in a way where billing is unknown (timeout, network error, server error, malformed reply), its worst case is counted as spent. Costs shown are estimates from provider-reported token usage and configured prices, not billing; check each provider's billing dashboard for billed amounts. The run record keeps reported-usage cost and the worst-case amounts reserved for unknown-billing calls separately.
+
+Token counting before each call: Anthropic and OpenAI both count with the provider. If OpenAI cannot count tokens for the configured model, a local estimate padded by 1.5x is used instead (labelled "local estimate" in the call log), and the normal margin is added on top. OpenAI reasoning tokens are billed as output and count toward the output limit, so they are already inside the worst case.
+
+## Providers and models
+
+Analyst and verifier are configured independently (`ANALYST_*`, `VERIFIER_*`; see `.env.example`). Revision calls use the analyst's settings. Supported providers:
+
+| Provider | Default model | Structured output | Images |
+|---|---|---|---|
+| `anthropic` | `claude-sonnet-5-5` | one forced tool call | prepared JPEG, sent as-is |
+| `openai` | `gpt-6-sol` | one forced strict function call (Responses API, `store: false`) | prepared JPEG with configurable `*_IMAGE_DETAIL` (default `high`) |
+
+OpenAI strict mode accepts a subset of JSON Schema. The converter closes every object and requires every field (our schemas have no optional fields, only nullable ones) and drops keywords strict mode does not support, such as text length limits. Every reply is still validated locally against the full schema and the automatic checks, so validation is unchanged.
+
+Prompts, evidence selection, checks and limits are identical for both providers. Mixed analyst/verifier providers are supported but not part of the pilot.
+
+Settings profiles in `config/` hold model choices only (they refuse API keys):
+
+- `config/analysis-openai.env`: GPT-6 Sol analyst + GPT-6 Sol verifier
+- `config/analysis-anthropic.env`: Claude Sonnet 5.5 analyst + Claude Sonnet 5.5 verifier
 
 ## Commands
 
@@ -314,6 +334,12 @@ cd worker
 npm run analyse -- --run 7db7f203 --company kosas.com            # free dry run: loads evidence, prints the plan and worst-case cost, writes nothing
 npm run analyse -- --run 7db7f203 --company kosas.com --live     # paid analysis
 npm run analyse -- --run 7db7f203 --company kosas.com --live --revise
+
+# Provider comparison pilot: same evidence, prompts and limits
+npm run analyse -- --run 7db7f203 --company kosas.com --settings config/analysis-openai.env              # free dry run
+npm run analyse -- --run 7db7f203 --company kosas.com --settings config/analysis-anthropic.env           # free dry run
+npm run analyse -- --run 7db7f203 --company kosas.com --settings config/analysis-openai.env --live       # paid
+npm run analyse -- --run 7db7f203 --company kosas.com --settings config/analysis-anthropic.env --live    # paid
 ```
 
 `--run` accepts a full research run ID or its first 8 characters. Logs go to `output/analysis/`.

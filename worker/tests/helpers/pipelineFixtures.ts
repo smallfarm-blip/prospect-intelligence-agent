@@ -34,7 +34,7 @@ export class MemorySink implements AnalysisSink {
   }
 }
 
-export const MODEL: ModelSettings = { provider: "anthropic", model: "claude-sonnet-5-5", pricing: { inputUsdPerMTok: 2, outputUsdPerMTok: 10 }, maxOutputTokens: 12_000 };
+export const MODEL: ModelSettings = { provider: "anthropic", model: "claude-sonnet-5-5", pricing: { inputUsdPerMTok: 2, outputUsdPerMTok: 10 }, maxOutputTokens: 12_000, imageDetail: null, reasoningEffort: null, serviceTier: null };
 export const VERIFIER: ModelSettings = { ...MODEL, maxOutputTokens: 4_000 };
 export const PIPE_LIMITS: AnalysisLimits = { budgetUsd: 2.5, inputCountMargin: 0.1, maxImages: 40, maxSectionsPerPage: 4, maxPageTextChars: 6000, maxVerifierImages: 8 };
 

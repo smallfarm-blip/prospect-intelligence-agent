@@ -18,10 +18,19 @@ export interface ModelRequest {
   tool: ToolSpec;
 }
 
+/** "provider" = counted by the provider's API; "estimate" = conservative local estimate. */
+export interface TokenCount {
+  tokens: number;
+  method: "provider" | "estimate";
+}
+
 export interface ModelResponse {
   toolInput: unknown;
   inputTokens: number;
+  /** Billed output tokens; for reasoning models this already includes reasoning tokens. */
   outputTokens: number;
+  reasoningTokens: number | null;
+  /** Provider-neutral: "max_tokens" means the output limit cut the answer off. */
   stopReason: string | null;
   latencyMs: number;
 }
@@ -46,8 +55,40 @@ export class ModelCallError extends Error {
 /** Provider-agnostic model access. Implementations must keep credentials server-side. */
 export interface ModelClient {
   readonly provider: string;
-  countInputTokens(req: ModelRequest): Promise<number>;
+  countInputTokens(req: ModelRequest): Promise<TokenCount>;
   complete(req: ModelRequest): Promise<ModelResponse>;
+}
+
+/** Revision calls use the analyst's client. */
+export interface ModelClients {
+  analyst: ModelClient;
+  verifier: ModelClient;
+}
+
+export async function postJson(url: string, headers: Record<string, string>, payload: unknown, timeoutMs: number): Promise<unknown> {
+  let res: Response;
+  try {
+    res = await fetch(url, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(payload), signal: AbortSignal.timeout(timeoutMs) });
+  } catch (err) {
+    const name = (err as Error).name;
+    if (name === "TimeoutError" || name === "AbortError") throw new ModelCallError("timeout", `No response within ${timeoutMs} ms`);
+    throw new ModelCallError("network", `Network error: ${(err as Error).message}`);
+  }
+  const text = await res.text();
+  if (!res.ok) {
+    let detail = text.slice(0, 500);
+    try {
+      detail = (JSON.parse(text) as { error?: { message?: string } }).error?.message ?? detail;
+    } catch {
+      // keep raw text
+    }
+    throw new ModelCallError("http", `Provider returned ${res.status}: ${detail}`, res.status);
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new ModelCallError("malformed", "Provider response was not JSON");
+  }
 }
 
 /** Rough local count used for dry runs and tests: ~4 characters per text token plus image estimates. */
@@ -57,17 +98,19 @@ export function estimateInputTokens(req: Pick<ModelRequest, "system" | "content"
   return tokens;
 }
 
-export type MockReply = { toolInput: unknown; outputTokens?: number; stopReason?: string } | ModelCallError;
+export type MockReply = { toolInput: unknown; outputTokens?: number; reasoningTokens?: number; stopReason?: string } | ModelCallError;
 
 /** Scripted client for tests: each call receives the next reply produced by the responder. */
 export class MockModelClient implements ModelClient {
-  readonly provider = "mock";
   readonly requests: ModelRequest[] = [];
 
-  constructor(private readonly responder: (req: ModelRequest, index: number) => MockReply) {}
+  constructor(
+    private readonly responder: (req: ModelRequest, index: number) => MockReply,
+    readonly provider = "mock",
+  ) {}
 
-  async countInputTokens(req: ModelRequest): Promise<number> {
-    return estimateInputTokens(req);
+  async countInputTokens(req: ModelRequest): Promise<TokenCount> {
+    return { tokens: estimateInputTokens(req), method: "estimate" };
   }
 
   async complete(req: ModelRequest): Promise<ModelResponse> {
@@ -78,6 +121,7 @@ export class MockModelClient implements ModelClient {
       toolInput: reply.toolInput,
       inputTokens: estimateInputTokens(req),
       outputTokens: reply.outputTokens ?? 1500,
+      reasoningTokens: reply.reasoningTokens ?? null,
       stopReason: reply.stopReason ?? "tool_use",
       latencyMs: 1,
     };

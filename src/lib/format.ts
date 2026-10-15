@@ -10,3 +10,9 @@ export function formatDate(iso: string | null): string {
 export function humanize(s: string): string {
   return s.replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase());
 }
+
+const PROVIDER_NAME: Record<string, string> = { openai: 'OpenAI', anthropic: 'Anthropic' };
+
+export function providerName(p: string): string {
+  return PROVIDER_NAME[p] ?? humanize(p);
+}

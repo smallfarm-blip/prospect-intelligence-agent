@@ -1,0 +1,21 @@
+{
+  "calibration": [
+    "independent US direct-to-consumer apparel brand selling online through its own Shopify store, founder-led, small team",
+    "US direct-to-consumer clean beauty or skincare brand with its own online store, founder-led, under 100 employees"
+  ],
+  "sampleCompany": { "name": "Taylor Stitch", "domain": "taylorstitch.com" },
+  "discovery": [
+    { "id": "apparel-company", "operation": "company_search", "query": "independent US direct-to-consumer apparel brand selling online through its own Shopify store, founder-led, small team" },
+    { "id": "beauty-company", "operation": "company_search", "query": "US direct-to-consumer clean beauty or skincare brand with its own online store, founder-led, under 100 employees" },
+    { "id": "home-company", "operation": "company_search", "query": "US direct-to-consumer home goods brand (bedding, kitchenware, decor) selling through its own ecommerce site, independent, under 100 employees" },
+    { "id": "wellness-company", "operation": "company_search", "query": "US direct-to-consumer wellness or supplements brand with its own online store, founder-led, growing small team" },
+    { "id": "specialty-company", "operation": "company_search", "query": "US direct-to-consumer specialty consumer goods brand (outdoor gear, pet products, stationery, coffee) selling online, independent" },
+    { "id": "apparel-web", "operation": "web_search", "query": "founder-led American DTC clothing brand online store shop new arrivals" },
+    { "id": "beauty-web", "operation": "web_search", "query": "independent American skincare brand founded by its founder, shop online, free shipping over" },
+    { "id": "home-web", "operation": "web_search", "query": "small American home goods brand made thoughtfully, shop our bestsellers online" },
+    { "id": "wellness-web", "operation": "web_search", "query": "founder-led US wellness brand shop online subscribe and save" },
+    { "id": "growth-company", "operation": "company_search", "query": "US DTC consumer brand that recently raised a seed or Series A round to grow its ecommerce business" },
+    { "id": "promo-web", "operation": "web_search", "query": "independent US DTC brand sitewide sale bundle and save shop online founder story" },
+    { "id": "lean-company", "operation": "company_search", "query": "bootstrapped profitable US direct-to-consumer brand with 10 to 50 employees selling online" }
+  ]
+}

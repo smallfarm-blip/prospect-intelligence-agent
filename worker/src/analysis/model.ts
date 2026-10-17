@@ -11,7 +11,7 @@ export interface ToolSpec {
 }
 
 export interface ModelRequest {
-  role: CallRole;
+  role: CallRole | "screening";
   settings: ModelSettings;
   system: string;
   content: ContentBlock[];

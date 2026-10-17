@@ -10,6 +10,7 @@
   "scripts": {
     "collect": "tsx --env-file=.env src/index.ts",
     "analyse": "tsx --env-file=.env src/analysis/run.ts",
+    "prospect": "tsx --env-file=.env src/prospecting/run.ts",
     "test": "tsx --test tests/*.test.ts",
     "typecheck": "tsc --noEmit"
   },

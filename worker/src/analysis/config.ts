@@ -67,6 +67,48 @@ export function applySettingsProfile(env: NodeJS.ProcessEnv, profileText: string
   return { ...env, ...profile };
 }
 
+/** Reads `<PREFIX>_PROVIDER`, `_MODEL`, prices, output cap and OpenAI options; problems are appended to `problems`. */
+export function loadModelSettings(env: NodeJS.ProcessEnv, prefix: string, maxOut: number, problems: string[], defaultProvider: Provider = "anthropic"): ModelSettings {
+  const set = (key: string) => !!env[key]?.trim();
+  const providerRaw = env[`${prefix}_PROVIDER`]?.trim().toLowerCase() || defaultProvider;
+  const provider = (PROVIDERS as readonly string[]).includes(providerRaw) ? (providerRaw as Provider) : defaultProvider;
+  if (provider !== providerRaw) problems.push(`${prefix}_PROVIDER must be one of ${PROVIDERS.join(", ")}`);
+  const defaults = DEFAULT_MODELS[provider];
+  const modelId = env[`${prefix}_MODEL`]?.trim() || defaults.model;
+
+  const tier = provider === "openai" ? env[`${prefix}_SERVICE_TIER`]?.trim() || "default" : null;
+  if (provider !== "openai" && set(`${prefix}_SERVICE_TIER`)) problems.push(`${prefix}_SERVICE_TIER applies to OpenAI only`);
+  const pricesExplicit = set(`${prefix}_INPUT_USD_PER_MTOK`) && set(`${prefix}_OUTPUT_USD_PER_MTOK`);
+  const defaultPricesApply = modelId === defaults.model && (tier === null || tier === "default");
+  if (!pricesExplicit && !defaultPricesApply) {
+    problems.push(`${prefix}_INPUT_USD_PER_MTOK and ${prefix}_OUTPUT_USD_PER_MTOK are required for ${modelId}${tier && tier !== "default" ? ` on the ${tier} tier` : ""}`);
+  }
+
+  let imageDetail: ImageDetail | null = null;
+  if (provider === "openai") {
+    const raw = env[`${prefix}_IMAGE_DETAIL`]?.trim() || "high";
+    if ((IMAGE_DETAILS as readonly string[]).includes(raw)) imageDetail = raw as ImageDetail;
+    else problems.push(`${prefix}_IMAGE_DETAIL must be one of ${IMAGE_DETAILS.join(", ")}`);
+  } else if (set(`${prefix}_IMAGE_DETAIL`)) problems.push(`${prefix}_IMAGE_DETAIL applies to OpenAI only`);
+
+  const effort = env[`${prefix}_REASONING_EFFORT`]?.trim() || null;
+  if (effort && provider !== "openai") problems.push(`${prefix}_REASONING_EFFORT applies to OpenAI only`);
+  if (effort && !REASONING_EFFORTS.includes(effort)) problems.push(`${prefix}_REASONING_EFFORT must be one of ${REASONING_EFFORTS.join(", ")}`);
+
+  return {
+    provider,
+    model: modelId,
+    pricing: {
+      inputUsdPerMTok: num(env, `${prefix}_INPUT_USD_PER_MTOK`, defaults.inputUsdPerMTok, problems),
+      outputUsdPerMTok: num(env, `${prefix}_OUTPUT_USD_PER_MTOK`, defaults.outputUsdPerMTok, problems),
+    },
+    maxOutputTokens: num(env, `${prefix}_MAX_OUTPUT_TOKENS`, maxOut, problems),
+    imageDetail,
+    reasoningEffort: provider === "openai" ? effort : null,
+    serviceTier: tier,
+  };
+}
+
 export function loadAnalysisConfig(env: NodeJS.ProcessEnv, opts: { live: boolean }): AnalysisConfig {
   const missing: string[] = [];
   const problems: string[] = [];
@@ -75,50 +117,9 @@ export function loadAnalysisConfig(env: NodeJS.ProcessEnv, opts: { live: boolean
   if (supabaseSecretKey.startsWith("sb_publishable_")) {
     problems.push("SUPABASE_SECRET_KEY holds a publishable key; the worker needs the secret key (sb_secret_...)");
   }
-  const set = (key: string) => !!env[key]?.trim();
 
-  const model = (prefix: "ANALYST" | "VERIFIER", maxOut: number): ModelSettings => {
-    const providerRaw = env[`${prefix}_PROVIDER`]?.trim().toLowerCase() || "anthropic";
-    const provider = (PROVIDERS as readonly string[]).includes(providerRaw) ? (providerRaw as Provider) : "anthropic";
-    if (provider !== providerRaw) problems.push(`${prefix}_PROVIDER must be one of ${PROVIDERS.join(", ")}`);
-    const defaults = DEFAULT_MODELS[provider];
-    const modelId = env[`${prefix}_MODEL`]?.trim() || defaults.model;
-
-    const tier = provider === "openai" ? env[`${prefix}_SERVICE_TIER`]?.trim() || "default" : null;
-    if (provider !== "openai" && set(`${prefix}_SERVICE_TIER`)) problems.push(`${prefix}_SERVICE_TIER applies to OpenAI only`);
-    const pricesExplicit = set(`${prefix}_INPUT_USD_PER_MTOK`) && set(`${prefix}_OUTPUT_USD_PER_MTOK`);
-    const defaultPricesApply = modelId === defaults.model && (tier === null || tier === "default");
-    if (!pricesExplicit && !defaultPricesApply) {
-      problems.push(`${prefix}_INPUT_USD_PER_MTOK and ${prefix}_OUTPUT_USD_PER_MTOK are required for ${modelId}${tier && tier !== "default" ? ` on the ${tier} tier` : ""}`);
-    }
-
-    let imageDetail: ImageDetail | null = null;
-    if (provider === "openai") {
-      const raw = env[`${prefix}_IMAGE_DETAIL`]?.trim() || "high";
-      if ((IMAGE_DETAILS as readonly string[]).includes(raw)) imageDetail = raw as ImageDetail;
-      else problems.push(`${prefix}_IMAGE_DETAIL must be one of ${IMAGE_DETAILS.join(", ")}`);
-    } else if (set(`${prefix}_IMAGE_DETAIL`)) problems.push(`${prefix}_IMAGE_DETAIL applies to OpenAI only`);
-
-    const effort = env[`${prefix}_REASONING_EFFORT`]?.trim() || null;
-    if (effort && provider !== "openai") problems.push(`${prefix}_REASONING_EFFORT applies to OpenAI only`);
-    if (effort && !REASONING_EFFORTS.includes(effort)) problems.push(`${prefix}_REASONING_EFFORT must be one of ${REASONING_EFFORTS.join(", ")}`);
-
-    return {
-      provider,
-      model: modelId,
-      pricing: {
-        inputUsdPerMTok: num(env, `${prefix}_INPUT_USD_PER_MTOK`, defaults.inputUsdPerMTok, problems),
-        outputUsdPerMTok: num(env, `${prefix}_OUTPUT_USD_PER_MTOK`, defaults.outputUsdPerMTok, problems),
-      },
-      maxOutputTokens: num(env, `${prefix}_MAX_OUTPUT_TOKENS`, maxOut, problems),
-      imageDetail,
-      reasoningEffort: provider === "openai" ? effort : null,
-      serviceTier: tier,
-    };
-  };
-
-  const analyst = model("ANALYST", 12_000);
-  const verifier = model("VERIFIER", 4_000);
+  const analyst = loadModelSettings(env, "ANALYST", 12_000, problems);
+  const verifier = loadModelSettings(env, "VERIFIER", 4_000, problems);
   const uses = (p: Provider) => analyst.provider === p || verifier.provider === p;
   const key = (name: string, needed: boolean) => (opts.live && needed ? required(env, name, missing) : env[name]?.trim() ?? "");
 

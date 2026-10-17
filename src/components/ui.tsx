@@ -89,10 +89,10 @@ export function PriorityBadge({ value, byReviewer }: { value: PriorityLevel | nu
 
 const READINESS_TONE: Record<OutreachReadiness, Tone> = { not_ready: 'neutral', exploratory: 'secondary', ready: 'success' };
 
-export function ReadinessBadge({ value }: { value: OutreachReadiness | null }) {
+export function ReadinessBadge({ value }: { value: OutreachReadiness }) {
   return (
-    <Badge tone={value ? READINESS_TONE[value] : 'neutral'} icon={<Megaphone className="h-3 w-3" />}>
-      {value ? READINESS_LABELS[value] : 'Outreach not decided'}
+    <Badge tone={READINESS_TONE[value]} icon={<Megaphone className="h-3 w-3" />}>
+      {READINESS_LABELS[value]}
     </Badge>
   );
 }

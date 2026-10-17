@@ -29,7 +29,7 @@ export function FindingCard({ view, onOpen, index }: { view: FindingView; onOpen
         <div className="mt-4 flex flex-wrap items-center gap-2">
           <ClassBadge value={assessment.findingClass.value} byReviewer={assessment.findingClass.source === 'reviewer'} />
           <PriorityBadge value={assessment.priority.value} byReviewer={assessment.priority.source === 'reviewer'} />
-          <ReadinessBadge value={assessment.readiness?.readiness ?? null} />
+          <ReadinessBadge value={assessment.outreach} />
         </div>
       )}
       <div className="mt-3 flex flex-wrap items-center gap-2">

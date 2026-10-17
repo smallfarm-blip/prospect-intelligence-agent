@@ -378,7 +378,9 @@ A research hypothesis can be high priority. Findings are listed in analysis orde
 **Reviewer controls (database-enforced):**
 
 - `finding_assessment_overrides`: append-only changes to class or priority with a required reason (10+ characters). The previous effective value is filled in by the database; rows cannot be edited or deleted. The system values stay on the finding and verification records.
-- `outreach_readiness_decisions`: append-only. `ready` requires the effective class to be `evidence_backed_opportunity`; `exploratory` requires `evidence_backed_opportunity` or `research_hypothesis` and an explicit confirmation that outreach will state uncertainty and claim no proven friction or revenue loss.
+- `outreach_readiness_decisions`: append-only. Every finding is Not ready until a reviewer records otherwise. `ready` requires the effective class to be `evidence_backed_opportunity`; `exploratory` requires `evidence_backed_opportunity` or `research_hypothesis` plus `uncertainty_confirmed` (outreach states uncertainty and claims no proven friction or revenue loss). Both approvals also require `proposed_wording` (40 to 2000 characters, stored for later evaluation of outreach angles) and three confirmations: relevant to a Head of eCommerce or similar decision-maker, grounded in this finding's evidence, and no overstatement of friction or impact. Not ready must carry no wording.
+- Outreach approval is a record only. Nothing in this system generates, sends or schedules prospect messages.
+- Sorting and filtering in the review app use the latest reviewer value; the system values and full history are always shown.
 - Reviewers cannot write to evidence, automatic checks, claim checks or verifier results.
 - `effective_assessment(finding_id, field)` returns latest reviewer change, else system assignment, else analyst proposal.
 

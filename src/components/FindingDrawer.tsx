@@ -65,7 +65,7 @@ export function FindingDrawer({ view, detail, urls, onClose, onOpenFinding, onRe
                     <PriorityBadge value={assessment.priority.value} byReviewer={assessment.priority.source === 'reviewer'} />
                   </>
                 )}
-                <ReadinessBadge value={assessment.readiness?.readiness ?? null} />
+                <ReadinessBadge value={assessment.outreach} />
                 <DecisionBadge decision={reviews[0]?.decision ?? null} />
               </div>
             </div>

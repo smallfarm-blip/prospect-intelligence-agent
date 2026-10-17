@@ -110,16 +110,32 @@ export async function submitOverride(input: { findingId: string; field: Assessme
   ) as AssessmentOverride;
 }
 
-export async function submitReadiness(input: {
+export interface ReadinessInput {
   findingId: string;
   readiness: OutreachReadiness;
-  uncertaintyConfirmed: boolean;
   reason: string;
-}): Promise<ReadinessDecision> {
+  proposedWording: string | null;
+  uncertaintyConfirmed: boolean;
+  decisionMakerRelevanceConfirmed: boolean;
+  evidenceGroundedConfirmed: boolean;
+  noOverstatementConfirmed: boolean;
+}
+
+export async function submitReadiness(input: ReadinessInput): Promise<ReadinessDecision> {
+  const approving = input.readiness !== 'not_ready';
   return must(
     await supabase
       .from('outreach_readiness_decisions')
-      .insert({ finding_id: input.findingId, readiness: input.readiness, uncertainty_confirmed: input.uncertaintyConfirmed, reason: input.reason.trim() })
+      .insert({
+        finding_id: input.findingId,
+        readiness: input.readiness,
+        reason: input.reason.trim(),
+        proposed_wording: approving ? input.proposedWording?.trim() ?? null : null,
+        uncertainty_confirmed: input.readiness === 'exploratory' && input.uncertaintyConfirmed,
+        decision_maker_relevance_confirmed: approving && input.decisionMakerRelevanceConfirmed,
+        evidence_grounded_confirmed: approving && input.evidenceGroundedConfirmed,
+        no_overstatement_confirmed: approving && input.noOverstatementConfirmed,
+      })
       .select('*')
       .single(),
     'saved outreach decision',

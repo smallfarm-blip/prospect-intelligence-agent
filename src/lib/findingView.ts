@@ -87,7 +87,7 @@ export type SortKey = 'analysis' | 'priority' | 'class';
 export interface ViewFilters {
   findingClass: FindingClass | 'all';
   priority: PriorityLevel | 'all';
-  readiness: OutreachReadiness | 'undecided' | 'all';
+  readiness: OutreachReadiness | 'all';
   sort: SortKey;
 }
 
@@ -96,12 +96,12 @@ export const DEFAULT_FILTERS: ViewFilters = { findingClass: 'all', priority: 'al
 const PRIORITY_ORDER: Record<PriorityLevel, number> = { high: 0, medium: 1, low: 2 };
 const CLASS_ORDER: Record<FindingClass, number> = { evidence_backed_opportunity: 0, research_hypothesis: 1, low_value_observation: 2 };
 
-/** Keeps the analysis order unless the reviewer explicitly picks a sort; maturity never ranks findings by default. */
+/** Filters and sorts use the latest reviewer value where one exists. Analysis order is kept unless a sort is chosen. */
 export function filterViews(views: FindingView[], f: ViewFilters): FindingView[] {
   const kept = views.filter(({ assessment: a }) =>
     (f.findingClass === 'all' || a.findingClass.value === f.findingClass) &&
     (f.priority === 'all' || a.priority.value === f.priority) &&
-    (f.readiness === 'all' || (a.readiness?.readiness ?? 'undecided') === f.readiness),
+    (f.readiness === 'all' || a.outreach === f.readiness),
   );
   if (f.sort === 'analysis') return kept;
   const rank = (v: FindingView) =>

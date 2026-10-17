@@ -20,6 +20,17 @@ export const READINESS_LABELS: Record<OutreachReadiness, string> = {
   ready: 'Ready for outreach',
 };
 
+export const READINESS_OPTIONS = Object.keys(READINESS_LABELS) as OutreachReadiness[];
+
+export const MIN_WORDING = 40;
+
+/** Mirrors the database rules in check_outreach_readiness(). */
+export function readinessAllowed(r: OutreachReadiness, cls: FindingClass | null): boolean {
+  if (r === 'not_ready') return true;
+  if (r === 'ready') return cls === 'evidence_backed_opportunity';
+  return cls === 'evidence_backed_opportunity' || cls === 'research_hypothesis';
+}
+
 export const CLASSES = Object.keys(CLASS_LABELS) as FindingClass[];
 export const PRIORITIES = Object.keys(PRIORITY_LABELS) as PriorityLevel[];
 
@@ -45,6 +56,8 @@ function effective<T extends string>(field: AssessmentField, finding: Finding, v
 export interface FindingAssessment {
   findingClass: Effective<FindingClass>;
   priority: Effective<PriorityLevel>;
+  /** Every finding is Not ready until a reviewer records otherwise. */
+  outreach: OutreachReadiness;
   readiness: ReadinessDecision | null;
 }
 
@@ -53,6 +66,7 @@ export function assessmentOf(finding: Finding, verification: Verification | null
   return {
     findingClass: effective<FindingClass>('finding_class', finding, verification, overrides),
     priority: effective<PriorityLevel>('investigation_priority', finding, verification, overrides),
+    outreach: readiness[0]?.readiness ?? 'not_ready',
     readiness: readiness[0] ?? null,
   };
 }

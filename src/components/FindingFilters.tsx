@@ -1,9 +1,7 @@
 import { RotateCcw, SlidersHorizontal } from 'lucide-react';
-import { CLASSES, CLASS_LABELS, PRIORITIES, PRIORITY_LABELS, READINESS_LABELS } from '@/lib/assessment';
+import { CLASSES, CLASS_LABELS, PRIORITIES, PRIORITY_LABELS, READINESS_LABELS, READINESS_OPTIONS } from '@/lib/assessment';
 import { DEFAULT_FILTERS, type SortKey, type ViewFilters } from '@/lib/findingView';
-import type { OutreachReadiness } from '@/lib/types';
 
-const READINESS: OutreachReadiness[] = ['not_ready', 'exploratory', 'ready'];
 const SORTS: Array<{ value: SortKey; label: string }> = [
   { value: 'analysis', label: 'Analysis order' },
   { value: 'priority', label: 'Priority, high first' },
@@ -33,7 +31,7 @@ export function FindingFilters({ value, onChange }: { value: ViewFilters; onChan
         label="Outreach"
         value={value.readiness}
         onChange={set('readiness')}
-        options={[{ value: 'all', label: 'All' }, { value: 'undecided', label: 'Not decided' }, ...READINESS.map((r) => ({ value: r, label: READINESS_LABELS[r] }))]}
+        options={[{ value: 'all', label: 'All' }, ...READINESS_OPTIONS.map((r) => ({ value: r, label: READINESS_LABELS[r] }))]}
       />
       <Select label="Order" value={value.sort} onChange={set('sort')} options={SORTS} />
       {changed && (

@@ -263,6 +263,11 @@ export interface ReadinessDecision {
   finding_id: string;
   readiness: OutreachReadiness;
   uncertainty_confirmed: boolean;
+  /** Required for 'exploratory' and 'ready'; recorded for later evaluation only. This system never sends outreach. */
+  proposed_wording: string | null;
+  decision_maker_relevance_confirmed: boolean;
+  evidence_grounded_confirmed: boolean;
+  no_overstatement_confirmed: boolean;
   reason: string;
   reviewer_id: string;
   created_at: string;

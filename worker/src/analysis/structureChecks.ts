@@ -75,11 +75,22 @@ export function captureStateWordingCheck(f: Finding, pack: EvidencePack): Automa
   return result("capture_state_wording", problems, "revision", "Capture-state wording matches the screenshots cited");
 }
 
-const CONSENT_WORDS = /\b(cookie|consent)\b/i;
-const PROMO_WORDS = /\b(promo\w*|discount|\d+\s?% off|offer|newsletter|sign[- ]?up|takeover|email capture)\b/i;
+const CONSENT_WORDS = /\b(cookies?|consent)\b/i;
+const PROMO_WORDS = /\b(promo\w*|discount\w*|\d+\s?% off|offer\w*|newsletter|sign[- ]?up|takeover|email capture)\b/i;
+const SEPARATION_WORDS = /\b(separate(?:ly)?|distinct|its own|independent(?:ly)?|second|another|different)\b/i;
 
+/**
+ * Flags a fact that treats a cookie banner and a promotion as one overlay. A fact may mention both to
+ * describe how two overlays sit relative to each other, provided it says they are separate and the
+ * finding records at least one of them in a fact of its own.
+ */
 export function overlayKindsSeparateCheck(f: Finding): AutomaticCheck {
-  const merged = f.observed_facts.filter((x) => CONSENT_WORDS.test(x.statement) && PROMO_WORDS.test(x.statement)).map((x) => x.fact_id);
+  const consentOnly = f.observed_facts.some((x) => CONSENT_WORDS.test(x.statement) && !PROMO_WORDS.test(x.statement));
+  const promoOnly = f.observed_facts.some((x) => PROMO_WORDS.test(x.statement) && !CONSENT_WORDS.test(x.statement));
+  const merged = f.observed_facts
+    .filter((x) => CONSENT_WORDS.test(x.statement) && PROMO_WORDS.test(x.statement))
+    .filter((x) => !SEPARATION_WORDS.test(x.statement) || !(consentOnly || promoOnly))
+    .map((x) => x.fact_id);
   return result(
     "consent_and_promotion_separate",
     merged.length ? [`${merged.join(", ")} describe a cookie consent banner and a promotional pop-up in one fact; record them as separate facts`] : [],

@@ -2,6 +2,7 @@ import type { EvidencePack, PackImage, PageView } from "./evidence.ts";
 import type { Finding, VerifierOutput } from "./schemas.ts";
 import type { Claim } from "./claims.ts";
 import { captureStateWordingCheck, factLinksCheck, overlayKindsSeparateCheck, pageAttributionCheck, pageScopeCheck, sharedImageIdentityCheck } from "./structureChecks.ts";
+import { isScreenshotQuote, quoteSegments } from "./quotes.ts";
 
 /** blocker: rejects. revision: needs revision at best. warning and info: shown to reviewers only. */
 export type CheckSeverity = "blocker" | "revision" | "warning" | "info";
@@ -54,6 +55,7 @@ const NON_PROSE = new Set([
   "evidence_refs",
   "region",
   "text_excerpt",
+  "quote_kind",
   "page_ref",
   "device",
   "finding_class",
@@ -132,18 +134,31 @@ export function automaticChecks(f: Finding, pack: EvidencePack): AutomaticCheck[
   });
 
   const quoteProblems: string[] = [];
-  let visualOnly = 0;
+  const undeclared: string[] = [];
+  let pageTextQuotes = 0;
+  let screenshotQuotes = 0;
   for (const fact of f.observed_facts) {
-    if (!fact.text_excerpt?.trim()) continue;
-    const textPages = fact.evidence_refs.map((ref) => cited.get(ref)).filter((r): r is ResolvedRef => !!r && !r.image);
-    if (!textPages.length) {
-      visualOnly++;
+    const segments = quoteSegments(fact);
+    if (!segments.length) continue;
+    if (!fact.quote_kind) {
+      undeclared.push(fact.fact_id);
       continue;
     }
-    const quote = normalise(fact.text_excerpt);
-    if (!textPages.some((r) => normalise(r.page.fullText).includes(quote))) {
-      quoteProblems.push(`${fact.fact_id}: "${fact.text_excerpt.slice(0, 80)}" not found in ${textPages.map((r) => r.ref).join(", ")}`);
+    const ownPage = fact.evidence_refs.map((ref) => cited.get(ref)).filter((r): r is ResolvedRef => !!r && r.page.ref === fact.page_ref);
+    if (isScreenshotQuote(fact)) {
+      if (!ownPage.some((r) => r.image)) quoteProblems.push(`${fact.fact_id}: quote is declared as screenshot wording but cites no screenshot of ${fact.page_ref}`);
+      else screenshotQuotes++;
+      continue;
     }
+    const texts = ownPage.filter((r) => !r.image);
+    if (!texts.length) {
+      quoteProblems.push(`${fact.fact_id}: quote is declared as page text but cites no page text of ${fact.page_ref}`);
+      continue;
+    }
+    const missingSegments = segments.filter((s) => !texts.some((r) => normalise(r.page.fullText).includes(normalise(s))));
+    if (missingSegments.length) {
+      quoteProblems.push(`${fact.fact_id}: ${missingSegments.map((s) => `"${s.slice(0, 80)}"`).join(", ")} not found in ${texts.map((r) => r.ref).join(", ")}`);
+    } else pageTextQuotes++;
   }
   checks.push({
     check: "quotes_match_page_text",
@@ -151,7 +166,15 @@ export function automaticChecks(f: Finding, pack: EvidencePack): AutomaticCheck[
     severity: quoteProblems.length ? "blocker" : "info",
     detail: quoteProblems.length
       ? quoteProblems.join("; ")
-      : `Quoted text found in stored page text${visualOnly ? `; ${visualOnly} quote(s) cite only screenshots and are left to the verifier` : ""}`,
+      : `${pageTextQuotes} page-text quote(s) found in stored page text; ${screenshotQuotes} screenshot quote(s) sent to the verifier to read in the cited screenshots`,
+  });
+  checks.push({
+    check: "quote_source_declared",
+    passed: !undeclared.length,
+    severity: undeclared.length ? "revision" : "info",
+    detail: undeclared.length
+      ? `${undeclared.join(", ")} quote wording without saying whether it comes from page text or a screenshot, or whether it is one passage or separate labels`
+      : "Every quote declares its source and form",
   });
 
   checks.push(

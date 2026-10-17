@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { AlertOctagon, Eye, Footprints, Lightbulb, LineChart, ListChecks, Route, TrendingUp } from 'lucide-react';
 import type { CriticalUnknown, FindingContent } from '@/lib/types';
 import { CLASS_LABELS, PRIORITY_LABELS } from '@/lib/assessment';
-import { humanize } from '@/lib/format';
+import { humanize, QUOTE_KIND_LABELS } from '@/lib/format';
 
 function Section({ icon, title, tone, children }: { icon: ReactNode; title: string; tone: string; children: ReactNode }) {
   return (
@@ -124,7 +124,12 @@ export function FindingDetails({ content: c }: { content: FindingContent }) {
                 </span>
               )}
             </div>
-            {f.text_excerpt && <blockquote className="mt-2 border-l-2 border-secondary-300 pl-3 font-serif italic text-ink-600">"{f.text_excerpt}"</blockquote>}
+            {f.text_excerpt && (
+              <div className="mt-2">
+                <blockquote className="border-l-2 border-secondary-300 pl-3 font-serif italic text-ink-600">"{f.text_excerpt}"</blockquote>
+                {f.quote_kind && <p className="mt-1 pl-3 text-xs text-ink-500">{QUOTE_KIND_LABELS[f.quote_kind]}</p>}
+              </div>
+            )}
             <p className="mt-2 font-mono text-xs text-ink-500">Cites {f.evidence_refs.join(', ')}{f.region ? ` / region on ${f.region.image_ref}` : ''}</p>
           </div>
         ))}

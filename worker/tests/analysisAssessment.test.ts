@@ -26,7 +26,7 @@ const img = (p: EvidencePack, pageRef: string, state: string) => p.images.find((
 const check = (checks: AutomaticCheck[], name: string) => checks.find((c) => c.check === name)!;
 
 function fact(pageRef: string, refs: string[], statement = "The page shows a shade selector and an Add to bag button.", device: "mobile" | "desktop" = "mobile"): Finding["observed_facts"][number] {
-  return { fact_id: "F1", page_ref: pageRef, device, statement, evidence_refs: refs, region: null, text_excerpt: null };
+  return { fact_id: "F1", page_ref: pageRef, device, statement, evidence_refs: refs, region: null, text_excerpt: null, quote_kind: null };
 }
 
 test("a fact may cite a byte-identical image for a second page, but must also cite evidence that identifies that page", async () => {

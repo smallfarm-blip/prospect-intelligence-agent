@@ -1,4 +1,5 @@
 import type { ClaimType, Finding } from "./schemas.ts";
+import { isScreenshotQuote, quoteSegments } from "./quotes.ts";
 
 export interface Claim {
   id: string;
@@ -21,13 +22,23 @@ export function claimsOf(f: Finding): Claim[] {
     claims.push({ id: `C${claims.length + 1}`, type, text, evidenceRefs: [], region: null, quote: null, pageRef: null, device: null, ...extra });
 
   for (const fact of f.observed_facts) {
+    const screenshotQuote = isScreenshotQuote(fact);
     add("observed_fact", `[${fact.fact_id} | page ${fact.page_ref} | ${fact.device}] ${fact.statement}`, {
       evidenceRefs: fact.evidence_refs,
       region: fact.region,
-      quote: fact.text_excerpt,
+      quote: screenshotQuote ? null : fact.text_excerpt,
       pageRef: fact.page_ref,
       device: fact.device,
     });
+    const segments = quoteSegments(fact);
+    if (screenshotQuote && segments.length) {
+      const images = fact.evidence_refs.filter((ref) => ref.startsWith("IMG-"));
+      add(
+        "observed_fact",
+        `[${fact.fact_id} | page ${fact.page_ref} | ${fact.device}] Screenshot wording: each of the following is legible, word for word, in the cited screenshot(s) ${images.join(", ")}: ${segments.map((s) => `"${s}"`).join("; ")}`,
+        { evidenceRefs: images, region: fact.region, pageRef: fact.page_ref, device: fact.device },
+      );
+    }
   }
   for (const inf of f.behavioral_inferences) {
     add("behavioral_inference", `${inf.statement}\nBased on: ${inf.basis_fact_ids.join(", ")}`);

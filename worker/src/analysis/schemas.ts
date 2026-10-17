@@ -5,7 +5,7 @@ const REF = /^(IMG-\d{2,3}|TXT-P\d{1,3})$/;
 const PAGE_REF = /^P\d{1,3}$/;
 const FACT_ID = /^F\d{1,2}$/;
 
-export const SCHEMA_VERSION = "finding-v1.1";
+export const SCHEMA_VERSION = "finding-v1.2";
 export const FINDING_CLASSES = ["evidence_backed_opportunity", "research_hypothesis", "low_value_observation"] as const;
 export const PRIORITY_LEVELS = ["high", "medium", "low"] as const;
 export const UNKNOWN_SEVERITIES = ["could_invalidate", "affects_priority", "minor"] as const;
@@ -20,6 +20,9 @@ export const RegionSchema = z
   })
   .describe("Area of the cited image, as fractions (0-1) of that image's width and height");
 
+export const QUOTE_KINDS = ["page_text_verbatim", "screenshot_verbatim", "page_text_labels", "screenshot_labels"] as const;
+export type QuoteKind = (typeof QUOTE_KINDS)[number];
+
 export const ObservedFactSchema = z.object({
   fact_id: z.string().regex(FACT_ID),
   page_ref: z.string().regex(PAGE_REF).describe("The one page (P1, P2...) this fact is about. Every cited reference must belong to this page."),
@@ -27,7 +30,17 @@ export const ObservedFactSchema = z.object({
   statement: text(10, 600).describe("Something directly visible in a screenshot or present in page text. No interpretation. Name the capture state using the standard terms."),
   evidence_refs: z.array(z.string().regex(REF)).min(1).max(6),
   region: RegionSchema.nullable(),
-  text_excerpt: z.string().max(400).nullable().describe("Exact quote from page text or screenshot, if the fact rests on wording"),
+  text_excerpt: z
+    .string()
+    .max(400)
+    .nullable()
+    .describe('Wording copied character for character, never a paraphrase. For several separate interface labels, join each exact label with " | ".'),
+  quote_kind: z
+    .enum(QUOTE_KINDS)
+    .nullable()
+    .describe(
+      "Where text_excerpt was copied from and its form: page_text_verbatim (one continuous passage of the cited TXT), screenshot_verbatim (wording read from a cited screenshot of this page), page_text_labels or screenshot_labels (separate labels joined with ' | '). Null only when text_excerpt is null.",
+    ),
 });
 
 export const JourneySchema = z

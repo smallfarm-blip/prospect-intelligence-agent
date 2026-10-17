@@ -60,6 +60,7 @@ export function finding(overrides: Partial<Finding> = {}): Finding {
         evidence_refs: ["IMG-02", "TXT-P1"],
         region: { image_ref: "IMG-02", x: 0.05, y: 0.4, width: 0.9, height: 0.2 },
         text_excerpt: "Add to bag $28",
+        quote_kind: "page_text_verbatim",
       },
     ],
     behavioral_inferences: [],

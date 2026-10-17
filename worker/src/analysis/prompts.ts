@@ -1,9 +1,9 @@
 import { captureStateGlossary } from "./captureStates.ts";
 
 export const PROMPT_VERSIONS = {
-  analyst: "analyst-v1.1",
-  verifier: "verifier-v1.1",
-  revision: "revision-v1.1",
+  analyst: "analyst-v1.2",
+  verifier: "verifier-v1.2",
+  revision: "revision-v1.2",
 } as const;
 
 const EVIDENCE_RULES = `
@@ -14,7 +14,7 @@ Evidence you receive
 ${captureStateGlossary()}
 - Never call a "First clear view, after closing pop-ups" screenshot "initial", "on load" or "the first screen". It is what was visible after the session closed pop-ups.
 - Byte-identical screenshots are stored once and listed under every page they were captured for. Such an image cannot show by itself which page it is: page identity comes from the URL, title, page text or a screenshot unique to that page.
-- Overlay records come from a heuristic scanner. The screenshot is the primary evidence. When records and pixels disagree, say so; never trust the record over what is visible. Cookie consent banners and promotional pop-ups are different things; never merge them in one fact.
+- Overlay records come from a heuristic scanner. The screenshot is the primary evidence. When records and pixels disagree, say so; never trust the record over what is visible. Cookie consent banners and promotional pop-ups are different things; never merge them in one fact. A fact may describe where one sits relative to the other if it calls them separate and the other overlay is described in a fact of its own.
 - Only static screens were captured. No toggle, selector, shade finder, gallery swipe or other interaction was exercised, so how those behave is unknown.
 - No checkout, cart, analytics, traffic, segment or test data was captured. Never state or imply that any such data was observed.`;
 
@@ -50,6 +50,7 @@ Output
 - Call the tool exactly once. Return between zero and five findings. Zero is a correct answer when support is weak; then explain why in no_findings_reason. Never pad to reach a number.
 - observed_facts: only what is visible or in page text. Each fact names ONE page_ref and that page's device, and cites only evidence captured for that page. Write one fact per thing observed; a cookie banner and a promotional pop-up are separate facts. When a fact relies on a byte-identical image shared by several pages, also cite that page's TXT reference or another image unique to it.
 - region: optional fractions (0-1) of the cited image when a specific area matters.
+- text_excerpt and quote_kind: text_excerpt is copied character for character, never paraphrased or tidied; a paraphrase belongs in the statement only. Declare where it came from. page_text_verbatim: one continuous passage that appears in the cited TXT of this page. screenshot_verbatim: wording you read in a cited screenshot of this page, typical for pop-ups, banners and overlay text that page text may not contain. page_text_labels or screenshot_labels: separate interface labels (buttons, swatch names, headings), each copied exactly and joined with " | ", never presented as one sentence. A screenshot quote must cite a screenshot of this page in the capture state where the wording is visible; an independent verifier reads it there and rejects the finding if it cannot. Leave both null when the fact does not rest on wording.
 - behavioral_inferences: informed interpretations of what a visitor might think or do, each resting on named facts (basis_fact_ids). They are inferences, not observations.
 - existing_site_support: what the site already does to help with this decision (guidance, tools, recommendations, controls), with the facts that show it and how it weakens or reshapes the hypothesis. List it even when it undermines your hypothesis. Leave it empty only if nothing visible helps.
 - problem_type: separate an inherently complex decision (decision_complexity) from friction the site adds (experience_friction). A hard choice is not friction.
@@ -67,6 +68,7 @@ You make two separate judgements. Keep them separate.
 
 1. Evidence verification (strict). For each claim, decide:
 - observed_fact: "demonstrated" only if you can see it in the cited image(s) or find it in the cited text, for the stated page and device; "partially_demonstrated" if part is visible; "not_demonstrated" if you cannot confirm it; "contradicted" if evidence shows otherwise. A byte-identical image shared by several pages does not show which page it is: check page identity from the URL, title, text or an image unique to that page. A "First clear view, after closing pop-ups" screenshot does not show what a visitor first sees.
+- A "Screenshot wording" claim is "demonstrated" only if every listed quote or label is legible, word for word, in the cited screenshot(s); page text does not count. "partially_demonstrated" if only some are; "not_demonstrated" if you cannot read them there (including when the wording is visible only in a different capture state); "contradicted" if the screenshot shows different wording.
 - behavioral_inference: "appropriately_framed" if presented as an interpretation that follows from the named facts; "overstated" if presented as fact, if it asserts intent or effect, or if the facts do not support it.
 - visitor_context, hypothesis, business_implication, validation_metric: "appropriately_framed" if it is clearly presented as an inference, question or something to measure; "overstated" if it asserts outcomes, invents figures, claims measured behaviour, or presents inference as fact.
 - page_and_state_check: are the cited pages, devices and capture states the correct ones for these claims, and are capture states described with the right words?

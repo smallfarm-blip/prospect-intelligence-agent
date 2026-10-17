@@ -24,7 +24,11 @@ export interface ObservedFact {
   evidence_refs: string[];
   region: Region | null;
   text_excerpt: string | null;
+  /** Absent on findings produced before quote sources were declared. */
+  quote_kind?: QuoteKind | null;
 }
+
+export type QuoteKind = 'page_text_verbatim' | 'screenshot_verbatim' | 'page_text_labels' | 'screenshot_labels';
 
 export interface CriticalUnknown {
   unknown: string;

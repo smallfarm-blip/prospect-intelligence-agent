@@ -299,7 +299,11 @@ Phase 1 reads evidence already stored by Phase 0 and never visits a website. It 
 
 1. **Evidence loader** pulls the research run's pages, screenshots (initial, after overlay dismissal, full-page sections) and page text from Supabase, and prepares model-sized images. Derived images are uploaded to `analysis/<analysis_run_id>/` in the private screenshot bucket.
 2. **Analyst** (one call) receives all evidence and returns findings in a fixed structure that separates observed facts, hypothesis, commercial relevance and measurement. Zero findings is a valid result. Invalid output is retried once.
-3. **Automatic checks** run on each finding: cited references exist, quotes match page text, no invented outcome figures, overlay claims agree with the screenshots and metadata. A blocker rejects the finding without a model call.
+3. **Automatic checks** run on each finding: cited references exist, quotes match their declared source, no invented outcome figures, overlay claims agree with the screenshots and metadata. A blocker rejects the finding without a model call.
+   - Every quote declares `quote_kind`. `page_text_verbatim` must appear in the cited TXT of the fact's own page; `page_text_labels` (labels joined with ` | `) is checked label by label. A miss is a blocker.
+   - `screenshot_verbatim` and `screenshot_labels` must cite a screenshot of the fact's own page (blocker otherwise). The wording is not looked up in page text; it becomes its own "Screenshot wording" claim that the verifier must read in the cited screenshots only. `not_demonstrated` or `contradicted` rejects the finding.
+   - A quote without a declared source needs revision. Findings stored before `finding-v1.2` keep their original check results.
+   - A fact may mention both a cookie banner and a promotion only to place one relative to the other: it must call them separate, and the other overlay must have a fact of its own.
 4. **Verifier** (one call per finding, separate prompt) sees only the finding's claims and the evidence they cite, and judges each claim.
 5. **Optional revision** (`--revise`): a finding marked "needs revision" gets one rewrite attempt, stored as a new linked finding and re-verified.
 

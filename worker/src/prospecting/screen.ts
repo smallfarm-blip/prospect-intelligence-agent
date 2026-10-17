@@ -62,7 +62,7 @@ export async function screenCompany(deps: ScreenDeps, target: ScreeningTarget, o
     screeningSources.push({ ref: "S1", url: site.url, kind: "company homepage", title: site.title, publishedDate: null, text: [site.description ? `Meta description: ${site.description}` : "", `Detected in homepage source: ${detected}`, `Visible text (truncated): ${site.pageText}`].filter(Boolean).join("\n") });
   }
 
-  const people = await deps.guard.search(deps.provider, { operation: "people_search", query: `${target.name} ${target.domain} founder OR "head of ecommerce" OR "director of ecommerce" OR "VP digital"`, numResults: 5 }, target.id);
+  const people = await deps.guard.search(deps.provider, { operation: "people_search", query: `${target.name} (${target.domain}) founder, CEO, head of ecommerce or director of digital`, numResults: 5 }, target.id);
   if (people.ok) {
     const dms = parsePeopleHits(people.value.hits, company, deps.provider.name, people.callId);
     if (dms.length) await deps.store.addDecisionMakers(target.id, dms);

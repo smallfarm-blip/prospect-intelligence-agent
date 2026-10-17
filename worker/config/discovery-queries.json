@@ -16,6 +16,9 @@
     { "id": "wellness-web", "operation": "web_search", "query": "founder-led US wellness brand shop online subscribe and save" },
     { "id": "growth-company", "operation": "company_search", "query": "US DTC consumer brand that recently raised a seed or Series A round to grow its ecommerce business" },
     { "id": "promo-web", "operation": "web_search", "query": "independent US DTC brand sitewide sale bundle and save shop online founder story" },
-    { "id": "lean-company", "operation": "company_search", "query": "bootstrapped profitable US direct-to-consumer brand with 10 to 50 employees selling online" }
+    { "id": "lean-company", "operation": "company_search", "query": "bootstrapped profitable US direct-to-consumer brand with 10 to 50 employees selling online" },
+    { "id": "retail-expansion-company", "operation": "company_search", "query": "US direct-to-consumer brand that started online and recently expanded into wholesale or national retail while still growing its own ecommerce store" },
+    { "id": "new-category-company", "operation": "company_search", "query": "independent US consumer brand that recently launched a new product category or second product line sold through its own online store" },
+    { "id": "ecommerce-hire-company", "operation": "company_search", "query": "founder-led US consumer products brand building out its ecommerce team, recently hired or hiring an ecommerce or digital marketing manager" }
   ]
 }

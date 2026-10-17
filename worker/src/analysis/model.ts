@@ -78,7 +78,9 @@ export async function postJson(url: string, headers: Record<string, string>, pay
   if (!res.ok) {
     let detail = text.slice(0, 500);
     try {
-      detail = (JSON.parse(text) as { error?: { message?: string } }).error?.message ?? detail;
+      const body = JSON.parse(text) as { error?: string | { message?: string }; tag?: string };
+      const message = typeof body.error === "string" ? body.error : body.error?.message;
+      if (message) detail = body.tag ? `${message} (${body.tag})` : message;
     } catch {
       // keep raw text
     }

@@ -48,7 +48,7 @@ export function trialRequests(plan: TrialPlan): Array<{ label: string; request: 
     reqs.push({ label: `Q${i + 1} general`, request: { operation: "web_search", query: q, numResults: plan.numResults } });
   }
   const c = plan.sampleCompany;
-  reqs.push({ label: "people", request: { operation: "people_search", query: `${c.name} ${c.domain} founder OR "head of ecommerce" OR "director of ecommerce"`, numResults: plan.numResults } });
+  reqs.push({ label: "people", request: { operation: "people_search", query: `${c.name} (${c.domain}) founder, CEO, head of ecommerce or director of digital`, numResults: plan.numResults } });
   const since = new Date(Date.now() - 548 * 86_400_000).toISOString().slice(0, 10);
   reqs.push({ label: "evidence", request: { operation: "evidence_search", query: `${c.name} (${c.domain}) launch, expansion, funding or new hire`, numResults: plan.numResults, startPublishedDate: since } });
   return reqs;

@@ -1,6 +1,7 @@
 import type { StoredEvidence } from "../store.ts";
 import { removedIn, type CaptureState, type DismissalStatus, type OverlayKind, type OverlaySummary } from "../overlays.ts";
 import type { AnalysisLimits } from "./config.ts";
+import { CAPTURE_STATE_TERMS } from "./captureStates.ts";
 import { inspectImage, planSections, prepareRegion, sha256, type Crop } from "./images.ts";
 
 export interface CompanyRef {
@@ -68,6 +69,7 @@ export interface PackImage {
   sha256: string;
   sourceSha256: string;
   alsoShownFor: string[];
+  alsoShownForEvidenceIds: string[];
   jpeg: Buffer;
 }
 
@@ -137,6 +139,7 @@ export async function loadEvidencePack(
     const existing = bySourceHash.get(key);
     if (existing) {
       existing.alsoShownFor.push(page.ref);
+      existing.alsoShownForEvidenceIds.push(row.id);
       page.imageRefs.push(existing.ref);
       page.notes.push(`${state} screenshot is byte-identical to ${existing.ref} (${existing.pageRef}); sent once.`);
       return;
@@ -158,6 +161,7 @@ export async function loadEvidencePack(
       sha256: sha256(prepared.jpeg),
       sourceSha256: srcHash,
       alsoShownFor: [],
+      alsoShownForEvidenceIds: [],
       jpeg: prepared.jpeg,
     };
     bySourceHash.set(key, img);
@@ -257,7 +261,7 @@ export async function loadEvidencePack(
   const sharedInitial = pack.images.filter((i) => i.captureState === "initial_viewport" && i.alsoShownFor.length);
   for (const img of sharedInitial) {
     pack.warnings.push(
-      `Initial screenshots for ${[img.pageRef, ...img.alsoShownFor].join(", ")} are byte-identical (${img.ref}). This usually means the same full-screen overlay covered each page; treat them as overlay-only, not page content.`,
+      `${CAPTURE_STATE_TERMS.initial_viewport.label} screenshots for ${[img.pageRef, ...img.alsoShownFor].join(", ")} are byte-identical (${img.ref}). This usually means the same full-screen overlay covered each page; treat them as overlay-only, not page content. The image alone cannot show which page it is: establish each page's identity from its URL, title, page text or its own ${CAPTURE_STATE_TERMS.after_overlay_dismissal.label} screenshot.`,
     );
   }
   if (pack.pages.some((p) => p.overlays.legacyFormat)) {
@@ -269,14 +273,19 @@ export async function loadEvidencePack(
   return pack;
 }
 
+/** Every page an image was captured for: the page it was first stored under, then byte-identical copies. */
+export function imagePages(img: PackImage): string[] {
+  return [img.pageRef, ...img.alsoShownFor];
+}
+
 export function imageLabel(img: PackImage, page: PageView): string {
   const where =
     img.captureState === "full_page_section"
-      ? `full-page section, source pixels y ${img.crop.y}-${img.crop.y + img.crop.height} of ${img.sourceHeight} (after overlay dismissal)`
-      : img.captureState === "initial_viewport"
-        ? "initial viewport, first-visit state before any interaction"
-        : "after overlay dismissal, same viewport";
-  const shared = img.alsoShownFor.length ? `; identical image also captured for ${img.alsoShownFor.join(", ")}` : "";
+      ? `${CAPTURE_STATE_TERMS.full_page_section.label} | this full-page section, source pixels y ${img.crop.y}-${img.crop.y + img.crop.height} of ${img.sourceHeight}, was captured after closing pop-ups`
+      : `${CAPTURE_STATE_TERMS[img.captureState].label} | ${CAPTURE_STATE_TERMS[img.captureState].meaning}`;
+  const shared = img.alsoShownFor.length
+    ? ` | captured for ${page.ref} and, as byte-identical copies, for ${img.alsoShownFor.join(", ")}; the image alone does not identify the page`
+    : ` | captured for ${page.ref} only`;
   return `${img.ref} | ${page.ref} ${page.slot} ${page.viewport} | ${where} | ${img.scaledWidth}x${img.scaledHeight}px${shared}`;
 }
 

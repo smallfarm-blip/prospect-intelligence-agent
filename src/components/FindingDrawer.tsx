@@ -1,15 +1,17 @@
 import { useEffect, useState } from 'react';
 import { GitBranch, X } from 'lucide-react';
 import type { FindingView } from '@/lib/findingView';
-import { citedImages, citedPages, imageUrl } from '@/lib/findingView';
-import type { Review, RunDetail } from '@/lib/types';
+import { citedImages, citedPages, imageUrl, isLegacyFinding } from '@/lib/findingView';
+import type { AssessmentOverride, ReadinessDecision, Review, RunDetail } from '@/lib/types';
 import { FindingDetails } from '@/components/FindingDetails';
 import { CitedImageView, StateComparison } from '@/components/EvidenceViews';
 import { VerificationPanel } from '@/components/VerificationPanel';
 import { ReviewPanel } from '@/components/ReviewPanel';
-import { DecisionBadge, VerificationBadge } from '@/components/ui';
+import { AssessmentControls } from '@/components/AssessmentControls';
+import { Badge, ClassBadge, DecisionBadge, EvidenceBadge, PriorityBadge, ReadinessBadge, VerificationBadge } from '@/components/ui';
+import { captureStateLabel } from '@/lib/captureStates';
 
-const TABS = ['Finding', 'Evidence', 'Verification', 'Your review'] as const;
+const TABS = ['Finding', 'Evidence', 'Verification', 'Assessment', 'Your review'] as const;
 type Tab = (typeof TABS)[number];
 
 interface Props {
@@ -19,11 +21,14 @@ interface Props {
   onClose: () => void;
   onOpenFinding: (id: string) => void;
   onReviewSaved: (r: Review) => void;
+  onOverrideSaved: (o: AssessmentOverride) => void;
+  onReadinessSaved: (r: ReadinessDecision) => void;
 }
 
-export function FindingDrawer({ view, detail, urls, onClose, onOpenFinding, onReviewSaved }: Props) {
+export function FindingDrawer({ view, detail, urls, onClose, onOpenFinding, onReviewSaved, onOverrideSaved, onReadinessSaved }: Props) {
   const [tab, setTab] = useState<Tab>('Finding');
-  const { finding, verification, reviews, revisedFrom, revisions } = view;
+  const { finding, verification, reviews, revisedFrom, revisions, assessment } = view;
+  const legacy = isLegacyFinding(finding);
 
   useEffect(() => {
     setTab('Finding');
@@ -48,7 +53,19 @@ export function FindingDrawer({ view, detail, urls, onClose, onOpenFinding, onRe
               <p className="font-mono text-xs text-ink-500">{finding.finding_ref}</p>
               <h2 className="mt-1 font-serif text-2xl font-semibold text-ink-900">{finding.short_title}</h2>
               <div className="mt-2 flex flex-wrap gap-2">
-                <VerificationBadge status={verification?.status ?? null} />
+                {legacy ? (
+                  <>
+                    <VerificationBadge status={verification?.status ?? null} />
+                    <Badge>Earlier format</Badge>
+                  </>
+                ) : (
+                  <>
+                    <EvidenceBadge status={verification?.evidence_status ?? verification?.status ?? null} legacy={!verification?.evidence_status} />
+                    <ClassBadge value={assessment.findingClass.value} byReviewer={assessment.findingClass.source === 'reviewer'} />
+                    <PriorityBadge value={assessment.priority.value} byReviewer={assessment.priority.source === 'reviewer'} />
+                  </>
+                )}
+                <ReadinessBadge value={assessment.readiness?.readiness ?? null} />
                 <DecisionBadge decision={reviews[0]?.decision ?? null} />
               </div>
             </div>
@@ -99,12 +116,15 @@ export function FindingDrawer({ view, detail, urls, onClose, onOpenFinding, onRe
                 </div>
               </section>
               <section className="space-y-4">
-                <p className="label">Initial vs after closing pop-ups, for the pages cited</p>
+                <p className="label">
+                  {captureStateLabel('initial_viewport')} vs {captureStateLabel('after_overlay_dismissal').toLowerCase()}, for the pages involved
+                </p>
                 {pages.map((p) => <StateComparison key={p.id} page={p} urls={urls} />)}
               </section>
             </div>
           )}
           {tab === 'Verification' && <VerificationPanel verification={verification} />}
+          {tab === 'Assessment' && <AssessmentControls view={view} onOverrideSaved={onOverrideSaved} onReadinessSaved={onReadinessSaved} />}
           {tab === 'Your review' && <ReviewPanel findingId={finding.id} reviews={reviews} onSaved={onReviewSaved} />}
         </div>
       </div>

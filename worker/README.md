@@ -353,6 +353,35 @@ Pilot: research run `7db7f203`. Regression: research run `d1408822`, where a coo
    `insert into reviewers (user_id, note) values ('<account id>', 'owner');`
 3. Reload. Reviewers can read analysis results and screenshots and record approve / reject (with reason) / revise decisions. Nobody else, and no signed-out visitor, can read anything.
 
+## Finding format v1.1: maturity, priority and outreach readiness
+
+Findings produced from now on carry `schema_version = finding-v1.1` (prompts `analyst-v1.1`, `verifier-v1.1`, `revision-v1.1`). Earlier findings, including the first Kosas pilot (`f29a764c`), are unchanged and shown as "Earlier format" in the review app.
+
+**Three separate dimensions, never derived from one another:**
+
+| Dimension | Values | Who sets it |
+|---|---|---|
+| Evidence maturity (`finding_class`) | `evidence_backed_opportunity`, `research_hypothesis`, `low_value_observation` | Analyst proposes; system may only lower it after verification; reviewer may change it |
+| Investigation priority | `high`, `medium`, `low` from commercial/RPV relevance, decision importance, hypothesis strength and effort to resolve unknowns | Analyst proposes; verifier recommends; reviewer may change it |
+| Outreach readiness | `not_ready`, `exploratory`, `ready` | Reviewers only. Nothing is ever set automatically |
+
+A research hypothesis can be high priority. Findings are listed in analysis order unless the reviewer picks a sort.
+
+**System class assignment** (`src/analysis/assessment.ts`) only lowers the class: capped at the verifier's recommendation; `low_value_observation` if generic or not a meaningful decision; `research_hypothesis` if existing site support was not considered, there are critical gaps, the evidence is not fully supported, or any critical unknown `could_invalidate` the finding. Priority is the verifier's recommendation, else the analyst's.
+
+**Evidence verification vs opportunity quality.** The verifier returns `evidence_verdict` (strict factual check) and a separate `opportunity_assessment`. `evidence_status` is computed from blocker/revision checks, claim verdicts and `evidence_verdict`; the overall `status` is the stricter combination. Opportunity judgements never soften evidence failures.
+
+**New finding fields:** fact `page_ref` + `device`, `behavioral_inferences` (with basis facts), `existing_site_support`, `problem_type` (friction vs decision complexity), structured `critical_unknowns` (severity, how to resolve, effort), optional cross-page `journey`, `rpv_pathway` (levers and mechanism; no figures), `investigation_priority` breakdown.
+
+**New automatic checks** (`src/analysis/structureChecks.ts`): page attribution and device (blocker); shared-screenshot page identity, capture-state wording ("first load" vs "first clear view, after closing pop-ups"), cookie/consent and promo kept as separate facts, fact links, journey and page scope (revision). Byte-identical screenshots are stored once with `also_captured_for_evidence_ids`, and each finding link records `page_ref` and `attribution` (`direct` or `identical_capture`).
+
+**Reviewer controls (database-enforced):**
+
+- `finding_assessment_overrides`: append-only changes to class or priority with a required reason (10+ characters). The previous effective value is filled in by the database; rows cannot be edited or deleted. The system values stay on the finding and verification records.
+- `outreach_readiness_decisions`: append-only. `ready` requires the effective class to be `evidence_backed_opportunity`; `exploratory` requires `evidence_backed_opportunity` or `research_hypothesis` and an explicit confirmation that outreach will state uncertainty and claim no proven friction or revenue loss.
+- Reviewers cannot write to evidence, automatic checks, claim checks or verifier results.
+- `effective_assessment(finding_id, field)` returns latest reviewer change, else system assignment, else analyst proposal.
+
 ## Tests
 
 `npm test` runs Phase 0 and Phase 1 tests with mocked model responses (no network, no cost). `npm run typecheck` checks types.

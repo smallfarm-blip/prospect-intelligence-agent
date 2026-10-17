@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { ImageOff, Maximize2, X } from 'lucide-react';
+import { Copy, ImageOff, Maximize2, X } from 'lucide-react';
 import type { CitedImage } from '@/lib/findingView';
 import type { PageEvidence } from '@/lib/types';
 import { Badge } from '@/components/ui';
 import { humanize } from '@/lib/format';
+import { CAPTURE_STATE_TERMS, captureStateLabel } from '@/lib/captureStates';
 
 function Lightbox({ src, alt, onClose }: { src: string; alt: string; onClose: () => void }) {
   return (
@@ -26,15 +27,25 @@ function Missing({ label }: { label: string }) {
 
 export function CitedImageView({ cited, url }: { cited: CitedImage; url: string | null }) {
   const [zoom, setZoom] = useState(false);
-  const { image, page, regions, factIds } = cited;
+  const { image, pages, regions, factIds } = cited;
+  const page = pages[0];
+  const shared = pages.length > 1;
   return (
     <figure className="space-y-2">
       <div className="flex flex-wrap items-center gap-2">
         <span className="font-mono text-xs font-medium text-ink-700">{image.ref}</span>
-        <Badge tone="secondary">{humanize(image.capture_state)}</Badge>
-        {page && <Badge>{page.page_slot} / {page.viewport_name}</Badge>}
+        <span title={CAPTURE_STATE_TERMS[image.capture_state]?.meaning}>
+          <Badge tone="secondary">{captureStateLabel(image.capture_state)}</Badge>
+        </span>
+        {pages.map((p) => <Badge key={p.id}>{p.page_slot} / {p.viewport_name}</Badge>)}
         <span className="text-xs text-ink-500">supports {factIds.join(', ')}</span>
       </div>
+      {shared && (
+        <p className="flex items-start gap-1.5 rounded-md bg-warning-50 px-2 py-1.5 text-xs text-warning-700">
+          <Copy className="mt-0.5 h-3 w-3 shrink-0" />
+          Identical screenshot captured for {pages.length} pages. On its own it cannot show which page it belongs to.
+        </p>
+      )}
       {url ? (
         <div className="group relative overflow-hidden rounded-lg border border-ink-200 bg-ink-100">
           <img src={url} alt={`Screenshot ${image.ref}`} className="block w-full" loading="lazy" />
@@ -63,8 +74,8 @@ export function CitedImageView({ cited, url }: { cited: CitedImage; url: string 
 export function StateComparison({ page, urls }: { page: PageEvidence; urls: Record<string, string> }) {
   const [zoom, setZoom] = useState<string | null>(null);
   const shots = [
-    { label: 'Initial view (as first loaded)', path: page.screenshot_path },
-    { label: 'After closing pop-ups', path: page.unobstructed_screenshot_path },
+    { label: captureStateLabel('initial_viewport'), path: page.screenshot_path },
+    { label: captureStateLabel('after_overlay_dismissal'), path: page.unobstructed_screenshot_path },
   ];
   return (
     <div className="rounded-lg border border-ink-200 p-4">

@@ -1,5 +1,15 @@
 import { SCREENSHOT_BUCKET, supabase } from '@/lib/supabase';
-import type { AnalysisRun, Decision, RejectionReason, Review, RunDetail } from '@/lib/types';
+import type {
+  AnalysisRun,
+  AssessmentField,
+  AssessmentOverride,
+  Decision,
+  OutreachReadiness,
+  ReadinessDecision,
+  RejectionReason,
+  Review,
+  RunDetail,
+} from '@/lib/types';
 
 function must<T>(res: { data: T | null; error: { message: string } | null }, what: string): T {
   if (res.error) throw new Error(`Could not load ${what}: ${res.error.message}`);
@@ -28,15 +38,21 @@ export async function loadRunDetail(run: AnalysisRun): Promise<RunDetail> {
   ]);
   const findingRows = must(findings, 'findings') as RunDetail['findings'];
   const ids = findingRows.map((f) => f.id);
-  const [evidence, verifications, reviews] = ids.length
+  const empty = { data: [], error: null };
+  const [evidence, verifications, reviews, overrides, readiness] = ids.length
     ? await Promise.all([
         supabase.from('analysis_finding_evidence').select('*').in('finding_id', ids),
         supabase.from('analysis_verifications').select('*').in('finding_id', ids).order('created_at', { ascending: false }),
         supabase.from('finding_reviews').select('*').in('finding_id', ids).order('created_at', { ascending: false }),
+        supabase.from('finding_assessment_overrides').select('*').in('finding_id', ids).order('created_at', { ascending: false }),
+        supabase.from('outreach_readiness_decisions').select('*').in('finding_id', ids).order('created_at', { ascending: false }),
       ])
-    : [{ data: [], error: null }, { data: [], error: null }, { data: [], error: null }];
+    : [empty, empty, empty, empty, empty];
   const imageRows = must(images, 'images') as RunDetail['images'];
-  const pageIds = [...new Set(imageRows.map((i) => i.page_evidence_id))];
+  const evidenceRows = must(evidence, 'evidence links') as RunDetail['evidence'];
+  const pageIds = [
+    ...new Set([...imageRows.flatMap((i) => [i.page_evidence_id, ...(i.also_captured_for_evidence_ids ?? [])]), ...evidenceRows.map((e) => e.page_evidence_id)]),
+  ];
   const pages = pageIds.length
     ? must(
         await supabase
@@ -51,9 +67,11 @@ export async function loadRunDetail(run: AnalysisRun): Promise<RunDetail> {
     calls: must(calls, 'model calls') as RunDetail['calls'],
     images: imageRows,
     findings: findingRows,
-    evidence: must(evidence, 'evidence links') as RunDetail['evidence'],
+    evidence: evidenceRows,
     verifications: must(verifications, 'verifications') as RunDetail['verifications'],
     reviews: must(reviews, 'reviews') as RunDetail['reviews'],
+    overrides: must(overrides, 'class and priority changes') as RunDetail['overrides'],
+    readiness: must(readiness, 'outreach readiness decisions') as RunDetail['readiness'],
     pages: pages as RunDetail['pages'],
   };
 }
@@ -78,4 +96,32 @@ export async function submitReview(input: { findingId: string; decision: Decisio
       .single(),
     'saved review',
   ) as Review;
+}
+
+/** previous_value and reviewer_id are filled in by the database. */
+export async function submitOverride(input: { findingId: string; field: AssessmentField; newValue: string; reason: string }): Promise<AssessmentOverride> {
+  return must(
+    await supabase
+      .from('finding_assessment_overrides')
+      .insert({ finding_id: input.findingId, field: input.field, new_value: input.newValue, reason: input.reason.trim() })
+      .select('*')
+      .single(),
+    'saved change',
+  ) as AssessmentOverride;
+}
+
+export async function submitReadiness(input: {
+  findingId: string;
+  readiness: OutreachReadiness;
+  uncertaintyConfirmed: boolean;
+  reason: string;
+}): Promise<ReadinessDecision> {
+  return must(
+    await supabase
+      .from('outreach_readiness_decisions')
+      .insert({ finding_id: input.findingId, readiness: input.readiness, uncertainty_confirmed: input.uncertaintyConfirmed, reason: input.reason.trim() })
+      .select('*')
+      .single(),
+    'saved outreach decision',
+  ) as ReadinessDecision;
 }

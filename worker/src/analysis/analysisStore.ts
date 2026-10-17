@@ -97,6 +97,7 @@ export class AnalysisStore implements EvidenceSource, AnalysisSink {
             scaled_height: img.scaledHeight,
             estimated_tokens: img.estimatedTokens,
             sha256: img.sha256,
+            also_captured_for_evidence_ids: img.alsoShownForEvidenceIds,
           })
           .select("id")
           .single(),

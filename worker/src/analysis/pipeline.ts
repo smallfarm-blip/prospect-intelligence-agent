@@ -2,7 +2,8 @@ import type { z } from "zod";
 import type { AnalysisLimits, ModelSettings } from "./config.ts";
 import { manifestOf, type EvidencePack, type PackImage } from "./evidence.ts";
 import { BudgetTracker, costUsd, worstCaseUsd } from "./budget.ts";
-import { automaticChecks, combineVerdict, hasBlocker, resolveRef, type AutomaticCheck, type VerificationStatus } from "./checks.ts";
+import { automaticChecks, combineVerdict, evidenceStatus, hasBlocker, resolveRef, type AutomaticCheck, type VerificationStatus } from "./checks.ts";
+import { assignAssessment } from "./assessment.ts";
 import { claimsOf } from "./claims.ts";
 import { analystContent, revisionContent, verifierContent } from "./context.ts";
 import { JPEG_QUALITY, MAX_LONG_EDGE, MAX_PIXELS } from "./images.ts";
@@ -11,11 +12,15 @@ import { ANALYST_SYSTEM, PROMPT_VERSIONS, REVISION_SYSTEM, VERIFIER_SYSTEM } fro
 import {
   AnalystOutputSchema,
   RevisionOutputSchema,
+  SCHEMA_VERSION,
   VerifierOutputSchema,
   formatIssues,
   toolSchema,
   type AnalystOutput,
   type Finding,
+  type FindingClass,
+  type OpportunityAssessment,
+  type PriorityLevel,
   type VerifierOutput,
 } from "./schemas.ts";
 
@@ -45,6 +50,9 @@ export interface CallRecord {
 export interface FindingEvidenceLink {
   fact_id: string;
   ref: string;
+  /** The page the fact is about; may differ from where a byte-identical image was first stored. */
+  page_ref: string;
+  attribution: "direct" | "identical_capture";
   page_evidence_id: string;
   image_ref: string | null;
   capture_state: string;
@@ -57,6 +65,9 @@ export interface FindingEvidenceLink {
 export interface FindingRecord {
   finding_ref: string;
   revision_of: string | null;
+  schema_version: string;
+  finding_class: FindingClass;
+  investigation_priority: PriorityLevel;
   short_title: string;
   page_type: string;
   content: Finding;
@@ -78,6 +89,10 @@ export interface VerificationRecord {
   model_verdict: VerifierOutput | null;
   status: VerificationStatus;
   reason: string;
+  evidence_status: VerificationStatus;
+  opportunity_assessment: (OpportunityAssessment & { assignment_notes: string[] }) | null;
+  assigned_class: FindingClass;
+  assigned_priority: PriorityLevel;
 }
 
 export interface RunStart {
@@ -282,9 +297,27 @@ export async function runAnalysis(pack: EvidencePack, clients: ModelClients, sin
   async function verify(finding: Finding, findingId: string): Promise<{ status: VerificationStatus | "not_verified"; verdict: VerifierOutput | null; reason: string }> {
     const checks = automaticChecks(finding, pack);
     const claims = claimsOf(finding);
+    const assessed = (verdict: VerifierOutput | null) => {
+      const evidence = evidenceStatus(checks, claims, verdict);
+      const a = assignAssessment(finding, evidence, verdict);
+      return {
+        evidence_status: evidence,
+        opportunity_assessment: verdict ? { ...verdict.opportunity_assessment, assignment_notes: a.notes } : null,
+        assigned_class: a.finding_class,
+        assigned_priority: a.investigation_priority,
+      };
+    };
     if (hasBlocker(checks)) {
       const combined = combineVerdict(checks, claims, null);
-      await sink.saveVerification(findingId, { model_call_id: null, verifier_model: null, automatic_checks: checks, claim_checks: [], model_verdict: null, ...combined });
+      await sink.saveVerification(findingId, {
+        model_call_id: null,
+        verifier_model: null,
+        automatic_checks: checks,
+        claim_checks: [],
+        model_verdict: null,
+        ...combined,
+        ...assessed(null),
+      });
       return { status: combined.status, verdict: null, reason: combined.reason };
     }
     const ids = new Set(claims.map((c) => c.id));
@@ -305,6 +338,7 @@ export async function runAnalysis(pack: EvidencePack, clients: ModelClients, sin
       claim_checks: res.output.claim_checks.map((cc) => ({ ...cc, claim: claims.find((c) => c.id === cc.claim_id) ?? null })),
       model_verdict: res.output,
       ...combined,
+      ...assessed(res.output),
     });
     return { status: combined.status, verdict: res.output, reason: combined.reason };
   }
@@ -383,17 +417,22 @@ export async function runAnalysis(pack: EvidencePack, clients: ModelClients, sin
 export function findingRecord(f: Finding, revisionOf: string | null, pack: EvidencePack, model: string): FindingRecord {
   const links: FindingEvidenceLink[] = [];
   for (const fact of f.observed_facts) {
+    const factPage = pack.pages.find((p) => p.ref === fact.page_ref);
     for (const ref of fact.evidence_refs) {
       const r = resolveRef(pack, ref);
       if (!r) continue;
+      const shared = r.image && factPage && r.image.alsoShownFor.includes(factPage.ref);
+      const page = shared ? factPage : r.page;
       links.push({
         fact_id: fact.fact_id,
         ref,
-        page_evidence_id: r.page.evidenceId,
+        page_ref: page.ref,
+        attribution: shared ? "identical_capture" : "direct",
+        page_evidence_id: page.evidenceId,
         image_ref: r.image?.ref ?? null,
         capture_state: r.image?.captureState ?? "extracted_text",
-        viewport: r.page.viewport,
-        url: r.page.url,
+        viewport: page.viewport,
+        url: page.url,
         region: fact.region?.image_ref === ref ? fact.region : null,
         text_excerpt: fact.text_excerpt,
       });
@@ -403,6 +442,9 @@ export function findingRecord(f: Finding, revisionOf: string | null, pack: Evide
   return {
     finding_ref: revisionOf ? `${f.finding_ref}-r1` : f.finding_ref,
     revision_of: revisionOf,
+    schema_version: SCHEMA_VERSION,
+    finding_class: f.finding_class,
+    investigation_priority: f.investigation_priority.level,
     short_title: f.short_title,
     page_type: f.page_type,
     content: f,

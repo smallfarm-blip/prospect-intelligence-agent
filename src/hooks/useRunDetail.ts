@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { loadRunDetail, signedUrls } from '@/lib/reviewApi';
-import type { AnalysisRun, Review, RunDetail } from '@/lib/types';
+import type { AnalysisRun, AssessmentOverride, ReadinessDecision, Review, RunDetail } from '@/lib/types';
 
 type State = { status: 'loading' } | { status: 'error'; message: string } | { status: 'ready'; detail: RunDetail; urls: Record<string, string> };
 
@@ -33,5 +33,13 @@ export function useRunDetail(run: AnalysisRun | null) {
     setState((s) => (s.status === 'ready' ? { ...s, detail: { ...s.detail, reviews: [review, ...s.detail.reviews] } } : s));
   }, []);
 
-  return { state, addReview };
+  const addOverride = useCallback((o: AssessmentOverride) => {
+    setState((s) => (s.status === 'ready' ? { ...s, detail: { ...s.detail, overrides: [o, ...s.detail.overrides] } } : s));
+  }, []);
+
+  const addReadiness = useCallback((r: ReadinessDecision) => {
+    setState((s) => (s.status === 'ready' ? { ...s, detail: { ...s.detail, readiness: [r, ...s.detail.readiness] } } : s));
+  }, []);
+
+  return { state, addReview, addOverride, addReadiness };
 }

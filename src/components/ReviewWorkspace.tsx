@@ -3,13 +3,14 @@ import { Inbox, LogOut, ScanSearch } from 'lucide-react';
 import type { Session } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { listRuns } from '@/lib/reviewApi';
-import { findingViews } from '@/lib/findingView';
+import { DEFAULT_FILTERS, filterViews, findingViews, type ViewFilters } from '@/lib/findingView';
 import type { AnalysisRun } from '@/lib/types';
 import { useRunDetail } from '@/hooks/useRunDetail';
 import { RunSidebar } from '@/components/RunSidebar';
 import { RunOverview } from '@/components/RunOverview';
 import { FindingCard } from '@/components/FindingCard';
 import { FindingDrawer } from '@/components/FindingDrawer';
+import { FindingFilters } from '@/components/FindingFilters';
 import { ErrorNote, Spinner } from '@/components/ui';
 
 export function ReviewWorkspace({ session }: { session: Session }) {
@@ -18,6 +19,7 @@ export function ReviewWorkspace({ session }: { session: Session }) {
   const [companyId, setCompanyId] = useState<string | null>(null);
   const [runId, setRunId] = useState<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
+  const [filters, setFilters] = useState<ViewFilters>(DEFAULT_FILTERS);
 
   useEffect(() => {
     listRuns()
@@ -32,8 +34,9 @@ export function ReviewWorkspace({ session }: { session: Session }) {
   }, []);
 
   const run = useMemo(() => runs?.find((r) => r.id === runId) ?? null, [runs, runId]);
-  const { state, addReview } = useRunDetail(run);
+  const { state, addReview, addOverride, addReadiness } = useRunDetail(run);
   const views = state.status === 'ready' ? findingViews(state.detail) : [];
+  const shown = filterViews(views, filters);
   const open = views.find((v) => v.finding.id === openId) ?? null;
 
   const selectCompany = (id: string) => {
@@ -78,10 +81,14 @@ export function ReviewWorkspace({ session }: { session: Session }) {
                 <>
                   <RunOverview detail={state.detail} />
                   <section className="space-y-3">
-                    <h2 className="label">Findings ({views.length})</h2>
+                    <h2 className="label">
+                      Findings ({shown.length === views.length ? views.length : `${shown.length} of ${views.length}`})
+                    </h2>
                     {views.length === 0 && <p className="text-sm text-ink-500">This run produced no findings.</p>}
+                    {views.length > 1 && <FindingFilters value={filters} onChange={setFilters} />}
+                    {views.length > 0 && shown.length === 0 && <p className="text-sm text-ink-500">No findings match these filters.</p>}
                     <div className="grid gap-4 xl:grid-cols-2">
-                      {views.map((v, i) => <FindingCard key={v.finding.id} view={v} index={i} onOpen={() => setOpenId(v.finding.id)} />)}
+                      {shown.map((v, i) => <FindingCard key={v.finding.id} view={v} index={i} onOpen={() => setOpenId(v.finding.id)} />)}
                     </div>
                   </section>
                 </>
@@ -92,7 +99,10 @@ export function ReviewWorkspace({ session }: { session: Session }) {
       </main>
 
       {open && state.status === 'ready' && (
-        <FindingDrawer view={open} detail={state.detail} urls={state.urls} onClose={() => setOpenId(null)} onOpenFinding={setOpenId} onReviewSaved={addReview} />
+        <FindingDrawer view={open} detail={state.detail} urls={state.urls} onClose={() => setOpenId(null)} onOpenFinding={setOpenId} onReviewSaved={addReview}
+          onOverrideSaved={addOverride}
+          onReadinessSaved={addReadiness}
+        />
       )}
     </div>
   );

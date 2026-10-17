@@ -1,8 +1,10 @@
 import type { EvidencePack, PackImage, PageView } from "./evidence.ts";
 import type { Finding, VerifierOutput } from "./schemas.ts";
 import type { Claim } from "./claims.ts";
+import { captureStateWordingCheck, factLinksCheck, overlayKindsSeparateCheck, pageAttributionCheck, pageScopeCheck, sharedImageIdentityCheck } from "./structureChecks.ts";
 
-export type CheckSeverity = "blocker" | "warning" | "info";
+/** blocker: rejects. revision: needs revision at best. warning and info: shown to reviewers only. */
+export type CheckSeverity = "blocker" | "revision" | "warning" | "info";
 
 export interface AutomaticCheck {
   check: string;
@@ -32,7 +34,7 @@ export function resolveRef(pack: EvidencePack, ref: string): ResolvedRef | null 
 const normalise = (s: string) => s.toLowerCase().replace(/[\u2018\u2019]/g, "'").replace(/[\u201c\u201d]/g, '"').replace(/\s+/g, " ").trim();
 
 /** Fields where numbers are expected because they describe data to collect, not outcomes. */
-const MEASUREMENT_FIELDS = new Set(["measurement_plan", "validation_data_needed", "intent_signals_to_examine", "unknowns"]);
+const MEASUREMENT_FIELDS = new Set(["measurement_plan", "validation_data_needed", "intent_signals_to_examine", "unknowns", "critical_unknowns"]);
 
 const OUTCOME_PATTERNS: Array<{ label: string; re: RegExp }> = [
   { label: "a stated rate", re: /\b(conversion|abandon\w*|bounce|drop[- ]?off|exit|churn|retention|click[- ]?through|add[- ]to[- ](?:cart|bag))\s+rates?\b[^.;]{0,30}?\b(?:is|are|was|of|at|around|about|near|~)\s*\d/i },
@@ -43,7 +45,29 @@ const OUTCOME_PATTERNS: Array<{ label: string; re: RegExp }> = [
 ];
 const FRAMING = /\b(measure|investigate|examine|validate|verify|check|whether|what share|how many|how much|unknown|track|compare|baseline|segment by|look at|quantify|estimate from)\b/i;
 
-const NON_PROSE = new Set(["finding_ref", "page_type", "confidence", "evidence_quality", "fact_id", "evidence_refs", "region", "text_excerpt"]);
+const NON_PROSE = new Set([
+  "finding_ref",
+  "page_type",
+  "confidence",
+  "evidence_quality",
+  "fact_id",
+  "evidence_refs",
+  "region",
+  "text_excerpt",
+  "page_ref",
+  "device",
+  "finding_class",
+  "problem_type",
+  "inference_id",
+  "basis_fact_ids",
+  "fact_ids",
+  "severity",
+  "resolution_source",
+  "resolution_effort",
+  "levers",
+  "level",
+  "confirming_evidence",
+]);
 
 /** Prose written by the analyst, labelled by top-level field. Quotes of page text are excluded. */
 function textFields(f: Finding): Array<{ field: string; text: string }> {
@@ -130,15 +154,14 @@ export function automaticChecks(f: Finding, pack: EvidencePack): AutomaticCheck[
       : `Quoted text found in stored page text${visualOnly ? `; ${visualOnly} quote(s) cite only screenshots and are left to the verifier` : ""}`,
   });
 
-  if (f.page_type !== "cross_page") {
-    const other = [...cited.values()].filter((r) => r.page.pageType !== f.page_type).map((r) => `${r.ref} is ${r.page.pageType}`);
-    checks.push({
-      check: "page_type_matches",
-      passed: !other.length,
-      severity: other.length ? "warning" : "info",
-      detail: other.length ? `Finding is about ${f.page_type} but ${[...new Set(other)].join(", ")}` : `All evidence is from ${f.page_type} pages`,
-    });
-  }
+  checks.push(
+    pageAttributionCheck(f, pack),
+    sharedImageIdentityCheck(f, pack),
+    pageScopeCheck(f, pack),
+    captureStateWordingCheck(f, pack),
+    overlayKindsSeparateCheck(f),
+    factLinksCheck(f),
+  );
 
   const overlayFacts = f.observed_facts.filter((x) => /\b(overlay|pop-?up|modal|banner|cookie|consent|interstitial)\b/i.test(x.statement));
   const afterOnly = overlayFacts.filter((x) => {
@@ -177,7 +200,12 @@ export function automaticChecks(f: Finding, pack: EvidencePack): AutomaticCheck[
       : "No conversion rates, lift, revenue or test results asserted",
   });
 
-  const citedPages = [...new Map([...cited.values()].map((r) => [r.page.ref, r.page])).values()];
+  const citedPages = [
+    ...new Map([
+      ...[...cited.values()].map((r) => [r.page.ref, r.page] as const),
+      ...f.observed_facts.flatMap((x) => pack.pages.filter((p) => p.ref === x.page_ref).map((p) => [p.ref, p] as const)),
+    ]).values(),
+  ];
   const metadataNotes: string[] = [];
   const contradictions: string[] = [];
   const claimsCookieGone = textFields(f)
@@ -224,6 +252,10 @@ export function combineVerdict(
     status = "rejected";
     reasons.push(`Automatic check failed (${c.check}): ${c.detail}`);
   }
+  for (const c of checks.filter((x) => !x.passed && x.severity === "revision")) {
+    status = worst(status, "needs_revision");
+    reasons.push(`Automatic check needs revision (${c.check}): ${c.detail}`);
+  }
   if (!verdict) {
     return { status, reason: reasons.join(" ") || "Not verified by a model" };
   }
@@ -251,7 +283,23 @@ export function combineVerdict(
     status = worst(status, "needs_revision");
     reasons.push(`Page or capture state: ${verdict.page_and_state_check.reason}`);
   }
-  status = worst(status, verdict.overall);
+  status = worst(worst(status, verdict.evidence_verdict), verdict.overall);
   reasons.push(`Verifier: ${verdict.overall_reason}`);
   return { status, reason: reasons.join(" ") };
+}
+
+/** Factual standing only: automatic checks, observed facts, inferences, page and capture state. Commercial value is ignored. */
+export function evidenceStatus(checks: AutomaticCheck[], claims: Claim[], verdict: VerifierOutput | null): VerificationStatus {
+  let status: VerificationStatus = "supported";
+  if (hasBlocker(checks)) status = "rejected";
+  if (checks.some((c) => !c.passed && c.severity === "revision")) status = worst(status, "needs_revision");
+  if (!verdict) return status;
+  const typeOf = new Map(claims.map((c) => [c.id, c.type]));
+  for (const cc of verdict.claim_checks) {
+    const type = typeOf.get(cc.claim_id);
+    if (type === "observed_fact" && (cc.verdict === "not_demonstrated" || cc.verdict === "contradicted")) status = "rejected";
+    else if ((type === "observed_fact" || type === "behavioral_inference") && cc.verdict !== "demonstrated" && cc.verdict !== "appropriately_framed") status = worst(status, "needs_revision");
+  }
+  if (!verdict.page_and_state_check.correct) status = worst(status, "needs_revision");
+  return worst(status, verdict.evidence_verdict);
 }

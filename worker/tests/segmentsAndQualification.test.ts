@@ -88,13 +88,14 @@ test("shipped discovery config spans all three segments without hard size filter
   for (const x of queries) assert.ok(!/\d+\s*(to|-)\s*\d+\s*employees|(under|fewer than|less than|more than|over)\s+\$?\d/i.test(x.query), x.id);
 });
 
-test("a 3-person brand with evidence of scale stays a probable prospect, and headcount never changes the score", () => {
-  const scores = [3, 100, 900].map((n) => scoreProspect(base({ facts: withStaff(n, [revenue(2e6)]) })));
+test("a 3-person brand with corroborated evidence of scale stays a probable prospect, and headcount never changes the score", () => {
+  const catalogue = fact("catalog_size", "60", "inferred", { n: 60, source: "ai_screening" });
+  const scores = [3, 100, 900].map((n) => scoreProspect(base({ facts: withStaff(n, [revenue(2e6), catalogue]) })));
   assert.equal(scores[0].fitStatus, "probable_fit");
   assert.deepEqual(new Set(scores.map((s) => s.evidenceScore)).size, 1);
   assert.deepEqual(new Set(scores.map((s) => s.potentialMax)).size, 1);
 
-  assert.equal(scoreProspect(base({ facts: withStaff(4, [fact("catalog_size", "60", "inferred", { n: 60 })]) })).fitStatus, "probable_fit");
+  assert.equal(scoreProspect(base({ facts: withStaff(4, [catalogue]) })).fitStatus, "needs_qualification");
   assert.equal(scoreProspect(base({ facts: withStaff(2), signals: [signal({ signalType: "growth_initiative", title: "Opening wholesale" })], screened: true })).fitStatus, "probable_fit");
 });
 

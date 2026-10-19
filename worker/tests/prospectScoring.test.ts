@@ -41,9 +41,12 @@ test("unknown revenue keeps the company visible as needs qualification with full
   assert.equal(rankProspects([{ companyId: "a", score: s.evidenceScore, potentialMax: s.potentialMax, fitStatus: s.fitStatus, setAside: false }]).length, 1);
 });
 
-test("provider revenue estimates give probable fit, never verified fit", () => {
-  const s = scoreProspect(base({ facts: probableFacts() }));
+test("an uncorroborated provider revenue estimate alone stays needs qualification; a second independent support makes it probable, never verified", () => {
+  assert.equal(scoreProspect(base({ facts: probableFacts() })).fitStatus, "needs_qualification");
+  assert.match(scoreProspect(base({ facts: probableFacts() })).fitBasis[0], /Only one line of support/);
+  const s = scoreProspect(base({ facts: [...probableFacts(), fact("catalog_size", "80", "inferred", { n: 80, source: "ai_screening" })] }));
   assert.equal(s.fitStatus, "probable_fit");
+  assert.match(s.fitBasis[0], /2 independent supporting signals/);
   assert.match(s.recommendedAction, /Verify commercial capacity/);
   const revenue = s.components.find((c) => c.key === "commercial")!.items.find((i) => i.key === "revenue_annual_usd")!;
   assert.ok(revenue.evidence < revenue.max, "an estimate earns less than full credit");
@@ -77,10 +80,12 @@ test("a reviewer fact overrides provider and AI facts", () => {
   assert.equal(r.valueText, "home");
 });
 
-test("exclusions and verified mismatches are not a fit; estimate mismatches only need qualification", () => {
+test("exclusions and verified mismatches are not a fit; large revenue is never an automatic exclusion", () => {
   assert.equal(scoreProspect(base({ facts: verifiedFacts(), excludedReason: "Describes itself as an agency" })).fitStatus, "not_fit");
+  const notDtc = [...verifiedFacts().filter((f) => f.attribute !== "sells_dtc"), fact("sells_dtc", "no", "verified", { source: "reviewer" })];
+  assert.equal(scoreProspect(base({ facts: notDtc })).fitStatus, "not_fit");
   const big = [...verifiedFacts().filter((f) => f.attribute !== "revenue_annual_usd"), fact("revenue_annual_usd", "$400M", "verified", { n: 400e6, source: "reviewer" })];
-  assert.equal(scoreProspect(base({ facts: big })).fitStatus, "not_fit");
+  assert.equal(scoreProspect(base({ facts: big })).fitStatus, "needs_qualification");
   const est = [...probableFacts().filter((f) => f.attribute !== "revenue_annual_usd"), fact("revenue_annual_usd", "$400M", "provider_estimate", { n: 400e6 })];
   assert.equal(scoreProspect(base({ facts: est })).fitStatus, "needs_qualification");
 });

@@ -28,14 +28,11 @@ const TEXT_RULES: Array<{ rule: string; pattern: RegExp; reason: string }> = [
   { rule: "marketplace", pattern: /\b(online marketplace|a marketplace (for|of|connecting)|multi-vendor)\b/i, reason: "Describes itself as a marketplace" },
 ];
 
-/** Rule-based exclusions for real companies. Provider size figures are estimates, so the reason says so. */
+/** Rule-based exclusions for real companies. Revenue never excludes on its own; above $75M is a relative fit band in scoring. */
 export function excludeCandidate(text: string, entity: CompanyEntity | null): Exclusion | null {
   for (const r of TEXT_RULES) if (r.pattern.test(text)) return { rule: r.rule, reason: r.reason };
   if (entity?.employeeCount !== null && entity?.employeeCount !== undefined && entity.employeeCount > 1000) {
     return { rule: "enterprise_scale", reason: `Provider estimate suggests enterprise scale (${entity.employeeCount.toLocaleString("en-US")} employees)` };
-  }
-  if (entity?.revenueAnnualUsd !== null && entity?.revenueAnnualUsd !== undefined && entity.revenueAnnualUsd > 250e6) {
-    return { rule: "enterprise_scale", reason: `Provider estimate suggests enterprise scale ($${Math.round(entity.revenueAnnualUsd / 1e6)}M revenue)` };
   }
   return null;
 }

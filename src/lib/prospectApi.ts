@@ -26,12 +26,18 @@ function saved<T>(res: { data: T | null; error: { message: string } | null }, wh
 }
 
 export async function loadBoard(): Promise<ProspectBoard> {
-  const [prospects, scores, overrides, decisions, calls] = await Promise.all([
+  const [prospects, scores, overrides, decisions, calls, segments, research] = await Promise.all([
     supabase.from('prospects').select('*, companies(name, canonical_domain, category, geography)').order('created_at', { ascending: false }).limit(1000),
     supabase.from('prospect_scores').select('*').order('computed_at', { ascending: false }).limit(5000),
     supabase.from('prospect_overrides').select('*').order('created_at', { ascending: false }).limit(5000),
     supabase.from('prospect_decisions').select('*').order('created_at', { ascending: false }).limit(5000),
     supabase.from('provider_calls').select('actual_cost_usd').limit(10000),
+    supabase.from('prospect_sources').select('company_id, discovery_segment').not('discovery_segment', 'is', null).limit(10000),
+    supabase
+      .from('analysis_runs')
+      .select('id, company_id, status, finding_count, analyst_model, estimated_cost_usd, billed_cost_usd, started_at, research_runs(estimated_cost_usd)')
+      .order('started_at', { ascending: false })
+      .limit(1000),
   ]);
   const spend = must(calls, 'search and screening costs') as Array<{ actual_cost_usd: number | null }>;
   return {
@@ -39,6 +45,8 @@ export async function loadBoard(): Promise<ProspectBoard> {
     scores: must(scores, 'scores') as ProspectBoard['scores'],
     overrides: must(overrides, 'score changes') as ProspectBoard['overrides'],
     decisions: must(decisions, 'qualification decisions') as ProspectBoard['decisions'],
+    segments: must(segments, 'discovery segments') as ProspectBoard['segments'],
+    research: must(research, 'existing research') as unknown as ProspectBoard['research'],
     spentUsd: spend.reduce((s, c) => s + Number(c.actual_cost_usd ?? 0), 0),
   };
 }

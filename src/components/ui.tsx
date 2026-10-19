@@ -3,7 +3,7 @@ import { AlertTriangle, BadgeCheck, CheckCircle2, CircleDashed, CircleSlash, Fla
 import type { Decision, FindingClass, OutreachReadiness, PriorityLevel, VerificationStatus } from '@/lib/types';
 import { CLASS_LABELS, PRIORITY_LABELS, READINESS_LABELS } from '@/lib/assessment';
 
-type Tone = 'neutral' | 'primary' | 'secondary' | 'accent' | 'success' | 'warning' | 'error';
+export type Tone = 'neutral' | 'primary' | 'secondary' | 'accent' | 'success' | 'warning' | 'error';
 
 const TONES: Record<Tone, string> = {
   neutral: 'bg-ink-100 text-ink-700 ring-ink-200',

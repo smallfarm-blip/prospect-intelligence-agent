@@ -295,7 +295,7 @@ export class SupabaseProspectStore implements ProspectStore {
         commercial_relevance: s.commercialRelevance,
         organizational_fit: s.organizationalFit,
         recommended_action: s.recommendedAction,
-        qualification: { assessments: s.assessments, tradeOffs: s.tradeOffs },
+        qualification: { assessments: s.assessments, tradeOffs: s.tradeOffs, fitBasis: s.fitBasis },
       }),
       "Save prospect score",
     );

@@ -40,6 +40,7 @@ export const LARGE_ORG_MIN = 200;
 
 export const TARGET_ROLES = new Set(["founder", "ecommerce_lead", "growth_marketing_lead", "digital_lead"]);
 const known = (r: Reading) => r.status !== "unknown" && r.status !== "contradicted";
+const viableRevenue = (r: Reading) => r.value !== null && r.value >= 1e6 && r.value <= 75e6;
 const est = (r: Reading) => (r.status === "verified" ? "verified" : r.status === "provider_estimate" ? "provider estimate" : "inferred");
 const strongSignal = (s: Signal) => s.confidence === "high" || s.confidence === "medium";
 const RANK: Record<Confidence, number> = { high: 3, medium: 2, low: 1 };
@@ -56,7 +57,7 @@ function commercialCapacity(i: QualificationInput): Assessment {
   const risks: string[] = [];
   const unknowns: string[] = [];
   if (!known(i.revenue)) unknowns.push(i.revenue.status === "contradicted" ? "Revenue: sources disagree" : "Revenue unknown, so budget is not established");
-  else if (i.revenue.match === "match") strengths.push(`Revenue ${i.revenue.label} (${est(i.revenue)})`);
+  else if (i.revenue.match === "match" || viableRevenue(i.revenue)) strengths.push(`Revenue ${i.revenue.label} (${est(i.revenue)})`);
   else risks.push(`Revenue ${i.revenue.label} (${est(i.revenue)})`);
   if (known(i.catalog)) (i.catalog.match === "match" ? strengths : risks).push(`Store shows ${i.catalog.label}`);
   if (known(i.funding) && i.funding.match !== "unknown") (i.funding.match === "match" ? strengths : risks).push(`Outside funding ${i.funding.label} (${est(i.funding)})`);

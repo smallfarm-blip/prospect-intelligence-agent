@@ -132,9 +132,8 @@ export function assessHit(hit: SearchHit, domain: string, rank: number): TrialCo
 
   const rev = revenue !== null ? evaluateEstimate("revenue_annual_usd", String(revenue), revenue) : null;
   const where = country ? evaluateEstimate("hq_country", country, null) : null;
-  if (rev?.match === "mismatch") return { ...company, assessment: `Unlikely fit: ${rev.label}` };
   const notes = [
-    rev ? (rev.match === "match" ? "capacity plausible (revenue est.)" : `capacity uncertain: ${rev.label}`) : "capacity unknown",
+    rev ? `revenue est. ${rev.label}` : "capacity unknown",
     employees !== null && employees <= SMALL_TEAM_MAX ? "small team, founder likely reachable" : employees !== null && employees >= LARGE_ORG_MIN ? "larger org, access may be layered" : null,
     where?.match === "partial" ? where.label : null,
   ].filter((n): n is string => !!n);

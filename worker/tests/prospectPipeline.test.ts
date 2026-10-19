@@ -167,7 +167,8 @@ test("exclusion rules", () => {
   assert.equal(skipNonCandidate("northwool.example"), null);
   assert.equal(excludeCandidate("The SaaS platform for brands", null)?.rule, "software_vendor");
   assert.equal(excludeCandidate("An online marketplace for makers", null)?.rule, "marketplace");
-  assert.equal(excludeCandidate("Merino basics, made in Vermont", entity({ revenueAnnualUsd: 900e6 }))?.rule, "enterprise_scale");
+  assert.equal(excludeCandidate("Merino basics, made in Vermont", entity({ revenueAnnualUsd: 900e6 })), null, "revenue alone never excludes");
+  assert.equal(excludeCandidate("Merino basics, made in Vermont", entity({ employeeCount: 4000 }))?.rule, "enterprise_scale");
   assert.equal(excludeCandidate("Merino basics, made in Vermont", entity()), null);
 });
 

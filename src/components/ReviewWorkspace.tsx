@@ -1,7 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Inbox, LogOut, ScanSearch } from 'lucide-react';
-import type { Session } from '@supabase/supabase-js';
-import { supabase } from '@/lib/supabase';
+import { Inbox } from 'lucide-react';
 import { listRuns } from '@/lib/reviewApi';
 import { DEFAULT_FILTERS, filterViews, findingViews, type ViewFilters } from '@/lib/findingView';
 import type { AnalysisRun } from '@/lib/types';
@@ -13,7 +11,7 @@ import { FindingDrawer } from '@/components/FindingDrawer';
 import { FindingFilters } from '@/components/FindingFilters';
 import { ErrorNote, Spinner } from '@/components/ui';
 
-export function ReviewWorkspace({ session }: { session: Session }) {
+export function ReviewWorkspace({ focusCompanyId }: { focusCompanyId: string | null }) {
   const [runs, setRuns] = useState<AnalysisRun[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [companyId, setCompanyId] = useState<string | null>(null);
@@ -25,13 +23,14 @@ export function ReviewWorkspace({ session }: { session: Session }) {
     listRuns()
       .then((r) => {
         setRuns(r);
-        if (r[0]) {
-          setCompanyId(r[0].company_id);
-          setRunId(r[0].id);
+        const first = r.find((x) => x.company_id === focusCompanyId) ?? r[0];
+        if (first) {
+          setCompanyId(first.company_id);
+          setRunId(first.id);
         }
       })
       .catch((e: Error) => setError(e.message));
-  }, []);
+  }, [focusCompanyId]);
 
   const run = useMemo(() => runs?.find((r) => r.id === runId) ?? null, [runs, runId]);
   const { state, addReview, addOverride, addReadiness } = useRunDetail(run);
@@ -46,21 +45,7 @@ export function ReviewWorkspace({ session }: { session: Session }) {
   };
 
   return (
-    <div className="min-h-screen">
-      <header className="sticky top-0 z-40 border-b border-ink-200 bg-white/90 backdrop-blur">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-3">
-          <div className="flex items-center gap-2 text-sm font-semibold text-ink-900">
-            <ScanSearch className="h-5 w-5 text-primary-600" /> Finding review
-          </div>
-          <div className="flex items-center gap-3 text-sm text-ink-500">
-            <span className="hidden sm:inline">{session.user.email}</span>
-            <button className="btn-ghost px-2 py-1" onClick={() => supabase.auth.signOut()}>
-              <LogOut className="h-4 w-4" /> Sign out
-            </button>
-          </div>
-        </div>
-      </header>
-
+    <>
       <main className="mx-auto max-w-7xl px-6 py-8">
         {error && <ErrorNote message={error} />}
         {!error && !runs && <Spinner label="Loading analysis runs..." />}
@@ -104,6 +89,6 @@ export function ReviewWorkspace({ session }: { session: Session }) {
           onReadinessSaved={addReadiness}
         />
       )}
-    </div>
+    </>
   );
 }

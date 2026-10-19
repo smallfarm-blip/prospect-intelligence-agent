@@ -1,7 +1,7 @@
 import { useReviewerAccess } from '@/hooks/useReviewerAccess';
 import { AuthScreen } from '@/components/AuthScreen';
 import { AccessPending } from '@/components/AccessPending';
-import { ReviewWorkspace } from '@/components/ReviewWorkspace';
+import { AppShell } from '@/components/AppShell';
 import { ErrorNote, Spinner } from '@/components/ui';
 
 export default function App() {
@@ -16,6 +16,6 @@ export default function App() {
     case 'pending':
       return <AccessPending session={access.session} />;
     case 'reviewer':
-      return <ReviewWorkspace session={access.session} />;
+      return <AppShell session={access.session} />;
   }
 }

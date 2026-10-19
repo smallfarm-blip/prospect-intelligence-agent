@@ -1,9 +1,9 @@
 import { assessQualification, TARGET_ROLES, type Assessment } from "./qualification.ts";
-import { TARGET_CATEGORIES, type Confidence, type DecisionMaker, type Fact, type FactAttribute, type FactStatus, type FitStatus, type Signal } from "./types.ts";
+import { TARGET_CATEGORIES, type Confidence, type DecisionMaker, type Fact, type FactAttribute, type FactSourceType, type FactStatus, type FitStatus, type Signal } from "./types.ts";
 
-export const SCORING_VERSION = "prospect-score-v2";
+export const SCORING_VERSION = "prospect-score-v3";
 
-const SCORED_ATTRIBUTES = ["category", "sells_dtc", "business_model", "hq_country", "revenue_annual_usd", "employee_count", "funding_total_usd", "leadership_model", "experimentation_tools", "promotion_tools", "catalog_size"] as const;
+export const SCORED_ATTRIBUTES = ["category", "sells_dtc", "business_model", "hq_country", "revenue_annual_usd", "employee_count", "funding_total_usd", "leadership_model", "experimentation_tools", "promotion_tools", "catalog_size"] as const;
 
 const STATUS_WEIGHT: Record<FactStatus, number> = { verified: 1, provider_estimate: 0.6, inferred: 0.5, contradicted: 0, unknown: 0 };
 const STATUS_RANK: Record<FactStatus, number> = { verified: 3, provider_estimate: 2, inferred: 1, contradicted: 0, unknown: 0 };
@@ -21,6 +21,7 @@ export interface ResolvedAttribute {
   valueText: string | null;
   valueNumber: number | null;
   sources: string[];
+  origins: FactSourceType[];
 }
 
 export type Match = "match" | "partial" | "mismatch" | "unknown";
@@ -74,6 +75,8 @@ export interface ProspectScore {
   recommendedAction: string;
   assessments: Assessment[];
   tradeOffs: string[];
+  /** Why the fit status was (or was not) raised to verified/probable. */
+  fitBasis: string[];
 }
 
 const ICP_ATTRIBUTES: FactAttribute[] = ["category", "sells_dtc", "business_model", "hq_country", "revenue_annual_usd", "employee_count"];
@@ -104,19 +107,19 @@ function agree(a: Fact, b: Fact): boolean {
 /** Picks the strongest evidence for one attribute. Reviewer facts win; disagreement at the top rank is a contradiction. */
 export function resolveAttribute(facts: Fact[], attribute: FactAttribute): ResolvedAttribute {
   const all = facts.filter((f) => f.attribute === attribute && f.status !== "unknown").sort((a, b) => b.checkedAt.localeCompare(a.checkedAt));
-  const unknown: ResolvedAttribute = { attribute, status: "unknown", valueText: null, valueNumber: null, sources: [] };
+  const unknown: ResolvedAttribute = { attribute, status: "unknown", valueText: null, valueNumber: null, sources: [], origins: [] };
   if (!all.length) return unknown;
   const reviewer = all.find((f) => f.sourceType === "reviewer");
-  if (reviewer) return { attribute, status: reviewer.status, valueText: reviewer.valueText, valueNumber: reviewer.valueNumber, sources: reviewer.sourceUrl ? [reviewer.sourceUrl] : [] };
+  if (reviewer) return { attribute, status: reviewer.status, valueText: reviewer.valueText, valueNumber: reviewer.valueNumber, sources: reviewer.sourceUrl ? [reviewer.sourceUrl] : [], origins: ["reviewer"] };
   if (all.some((f) => f.status === "contradicted")) {
-    return { attribute, status: "contradicted", valueText: all.map((f) => f.valueText).join(" vs "), valueNumber: null, sources: urls(all) };
+    return { attribute, status: "contradicted", valueText: all.map((f) => f.valueText).join(" vs "), valueNumber: null, sources: urls(all), origins: [] };
   }
   const topRank = Math.max(...all.map((f) => STATUS_RANK[f.status]));
   const top = all.filter((f) => STATUS_RANK[f.status] === topRank);
   if (top.some((f) => !agree(f, top[0]))) {
-    return { attribute, status: "contradicted", valueText: [...new Set(top.map((f) => f.valueText))].join(" vs "), valueNumber: null, sources: urls(top) };
+    return { attribute, status: "contradicted", valueText: [...new Set(top.map((f) => f.valueText))].join(" vs "), valueNumber: null, sources: urls(top), origins: [] };
   }
-  return { attribute, status: top[0].status, valueText: top[0].valueText, valueNumber: top[0].valueNumber, sources: urls(top) };
+  return { attribute, status: top[0].status, valueText: top[0].valueText, valueNumber: top[0].valueNumber, sources: urls(top), origins: [...new Set(top.map((f) => f.sourceType))] };
 }
 
 function urls(facts: Fact[]): string[] {
@@ -136,9 +139,30 @@ export function normalizeCategory(raw: string): string {
 
 const isUs = (v: string) => /^(us|usa|u\.s\.a?\.?|united states( of america)?)$/i.test(v.trim());
 
-/** Same thresholds as the discovery exclusion rules; size never counts for or against a company below them. */
-const ENTERPRISE_REVENUE = 250e6;
+/** Headcount threshold shared with the discovery exclusion rules; size never counts for or against a company below it. */
 const ENTERPRISE_STAFF = 1000;
+
+export type RevenueBand = "core_sweet_spot" | "core" | "below_core" | "above_core" | "outside_primary" | "well_below_core";
+
+/** Relative fit bands, not eligibility rules: $5M-$25M is the core ICP, $5M-$10M the sweet spot. */
+export function revenueBand(n: number): RevenueBand {
+  if (n > 75e6) return "outside_primary";
+  if (n > 25e6) return "above_core";
+  if (n >= 10e6) return "core";
+  if (n >= 5e6) return "core_sweet_spot";
+  return n >= 1e6 ? "below_core" : "well_below_core";
+}
+
+const REVENUE_BANDS: Record<RevenueBand, { match: Match; factor: number; note: string }> = {
+  core_sweet_spot: { match: "match", factor: 1, note: "core ICP sweet spot" },
+  core: { match: "match", factor: 0.9, note: "core ICP" },
+  below_core: { match: "partial", factor: 0.6, note: "below the core range; potentially viable" },
+  above_core: { match: "partial", factor: 0.6, note: "above the core range; potentially viable" },
+  outside_primary: { match: "partial", factor: 0.25, note: "outside the primary ICP; needs evidence of need and access" },
+  well_below_core: { match: "partial", factor: 0.3, note: "well below the core range; ability to fund a sprint unproven" },
+};
+
+const dollars = (n: number) => "\u0024" + money(n);
 
 function evaluate(r: ResolvedAttribute): Evaluation {
   if (r.status === "unknown" || r.status === "contradicted" || r.valueText === null) return { match: "unknown", factor: 0, label: STATUS_LABEL[r.status] };
@@ -158,12 +182,11 @@ function evaluate(r: ResolvedAttribute): Evaluation {
       return { match: "mismatch", factor: 0, label: v.replace(/_/g, " ") };
     case "hq_country":
       return isUs(v) ? { match: "match", factor: 1, label: "United States" } : { match: "partial", factor: 0.3, label: `${r.valueText} (outside US-first focus)` };
-    case "revenue_annual_usd":
+    case "revenue_annual_usd": {
       if (n === null) return { match: "unknown", factor: 0, label: "no figure" };
-      if (n > ENTERPRISE_REVENUE) return { match: "mismatch", factor: 0, label: `${money(n)} (enterprise scale)` };
-      if (n >= 1e6) return { match: "match", factor: 1, label: money(n) };
-      if (n >= 250e3) return { match: "partial", factor: 0.5, label: `${money(n)} (a $4,500 sprint may be a stretch)` };
-      return { match: "partial", factor: 0.15, label: `${money(n)} (ability to fund a sprint doubtful)` };
+      const b = REVENUE_BANDS[revenueBand(n)];
+      return { match: b.match, factor: b.factor, label: `${dollars(n)} (${b.note})` };
+    }
     case "employee_count":
       if (n === null) return { match: "unknown", factor: 0, label: "no figure" };
       return n > ENTERPRISE_STAFF ? { match: "mismatch", factor: 0, label: `${n} people (enterprise scale)` } : { match: "match", factor: 1, label: `${n} people` };
@@ -191,7 +214,7 @@ export function money(n: number): string {
 
 /** Judges one provider-estimated value against the ICP using the same thresholds as scoring. */
 export function evaluateEstimate(attribute: FactAttribute, valueText: string, valueNumber: number | null): { match: Match; label: string } {
-  const e = evaluate({ attribute, status: "provider_estimate", valueText, valueNumber, sources: [] });
+  const e = evaluate({ attribute, status: "provider_estimate", valueText, valueNumber, sources: [], origins: ["provider"] });
   return { match: e.match, label: e.label };
 }
 
@@ -313,6 +336,7 @@ export function scoreProspect(input: ProspectScoreInput): ProspectScore {
     recommendedAction: recommendAction(fitStatus, unresolved, input),
     assessments: qualification.assessments,
     tradeOffs: qualification.tradeOffs,
+    fitBasis: fitBasis(fitStatus, fitSupports(r, businessSignals), input.excludedReason),
   };
 }
 
@@ -326,13 +350,53 @@ function clamp(n: number): number {
 
 const ok = (r: ResolvedAttribute, min: FactStatus) => STATUS_RANK[r.status] >= STATUS_RANK[min] && evaluate(r).match === "match";
 
+const viableRevenue = (r: ResolvedAttribute) => r.valueNumber !== null && r.valueNumber >= 1e6 && r.valueNumber <= 75e6;
+
+type SupportOrigin = "provider" | "company_site" | "third_party" | "reviewer" | "manual_import" | "screening";
+
+export interface FitSupport {
+  kind: "revenue" | "catalogue" | "funding" | "business_signal";
+  origin: SupportOrigin;
+  label: string;
+  strong: boolean;
+}
+
+const originOf = (r: ResolvedAttribute): SupportOrigin => {
+  const o = r.origins[0];
+  return o === "ai_screening" || o === undefined ? "company_site" : o;
+};
+
+/** A business signal is strong only when it is high confidence, sourced and explains its relevance. */
+export function isStrongSignal(s: Signal): boolean {
+  return s.confidence === "high" && s.sourceUrls.length > 0 && s.observedEvidence.trim().length >= 20 && s.businessRelevance.trim().length >= 20;
+}
+
+/** Commercial evidence that could lift a company above Needs qualification. Headcount is never support. */
+export function fitSupports(r: Record<FactAttribute, ResolvedAttribute>, businessSignals: Signal[]): FitSupport[] {
+  const out: FitSupport[] = [];
+  const rev = r.revenue_annual_usd;
+  if (STATUS_RANK[rev.status] >= STATUS_RANK.inferred && viableRevenue(rev)) {
+    out.push({ kind: "revenue", origin: originOf(rev), label: `Revenue ${evaluate(rev).label}, ${STATUS_LABEL[rev.status]}`, strong: rev.status === "verified" });
+  }
+  if (ok(r.catalog_size, "inferred")) out.push({ kind: "catalogue", origin: originOf(r.catalog_size), label: `Store shows ${evaluate(r.catalog_size).label}`, strong: false });
+  if (ok(r.funding_total_usd, "inferred")) out.push({ kind: "funding", origin: originOf(r.funding_total_usd), label: `Outside funding ${dollars(r.funding_total_usd.valueNumber ?? 0)}, ${STATUS_LABEL[r.funding_total_usd.status]}`, strong: r.funding_total_usd.status === "verified" });
+  for (const s of businessSignals) out.push({ kind: "business_signal", origin: "screening", label: `${s.title} (${s.confidence} confidence)`, strong: isStrongSignal(s) });
+  return out;
+}
+
+/** Independent = at least two different kinds of evidence that do not all come from the same source. */
+function independentSupport(supports: FitSupport[]): boolean {
+  return new Set(supports.map((s) => s.kind)).size >= 2 && new Set(supports.map((s) => s.origin)).size >= 2;
+}
+
 /**
- * Fit is about the kind of business, plus some evidence it can pay. Headcount is never a gate: a small
- * team with revenue, a real catalogue, funding or a growth trigger can be a probable fit.
+ * Fit is about the kind of business, plus evidence it can pay. Verified fit needs verified revenue in a viable
+ * band. Probable fit needs multiple independent supports, or one strong directly relevant signal; one generic
+ * trigger, catalogue, funding mention or provider estimate alone leaves the company in Needs qualification.
  */
 export function classifyFit(r: Record<FactAttribute, ResolvedAttribute>, excludedReason: string | null, businessSignals: Signal[] = []): FitStatus {
   if (excludedReason) return "not_fit";
-  const verifiedMismatch = (["category", "sells_dtc", "business_model", "revenue_annual_usd"] as FactAttribute[]).some(
+  const verifiedMismatch = (["category", "sells_dtc", "business_model"] as FactAttribute[]).some(
     (a) => r[a].status === "verified" && evaluate(r[a]).match === "mismatch",
   );
   if (verifiedMismatch) return "not_fit";
@@ -340,15 +404,31 @@ export function classifyFit(r: Record<FactAttribute, ResolvedAttribute>, exclude
   const dtcVerified = ok(r.sells_dtc, "verified") || ok(r.business_model, "verified");
   const dtcLikely = ok(r.sells_dtc, "inferred") || ok(r.business_model, "inferred");
   const coreContradicted = (["category", "sells_dtc", "hq_country", "revenue_annual_usd", "employee_count"] as FactAttribute[]).some((a) => r[a].status === "contradicted");
-  const capacityVerified = ok(r.revenue_annual_usd, "verified");
-  const capacityLikely = ok(r.revenue_annual_usd, "provider_estimate") || ok(r.catalog_size, "inferred") || ok(r.funding_total_usd, "provider_estimate") || businessSignals.length > 0;
-  const estimateMismatch = (["revenue_annual_usd", "employee_count", "business_model", "category"] as FactAttribute[]).some(
+  const capacityVerified = r.revenue_annual_usd.status === "verified" && viableRevenue(r.revenue_annual_usd);
+  const supports = fitSupports(r, businessSignals);
+  const capacityLikely = independentSupport(supports) || supports.some((s) => s.strong);
+  const estimateMismatch = (["employee_count", "business_model", "category"] as FactAttribute[]).some(
     (a) => r[a].status !== "verified" && r[a].status !== "unknown" && evaluate(r[a]).match === "mismatch",
   );
 
   if (!coreContradicted && ok(r.category, "verified") && dtcVerified && ok(r.hq_country, "verified") && capacityVerified) return "verified_fit";
   if (!coreContradicted && !estimateMismatch && ok(r.category, "inferred") && dtcLikely && ok(r.hq_country, "inferred") && capacityLikely) return "probable_fit";
   return "needs_qualification";
+}
+
+function fitBasis(fit: FitStatus, supports: FitSupport[], excludedReason: string | null): string[] {
+  if (fit === "not_fit") return [excludedReason ? `Set aside: ${excludedReason}` : "Set aside: verified evidence places it outside the ICP"];
+  const listed = supports.map((s) => `${s.label} [${s.origin.replace(/_/g, " ")}]`);
+  if (fit === "verified_fit") return ["Category, direct selling, country and revenue are independently verified", ...listed];
+  const strong = supports.filter((s) => s.strong);
+  if (fit === "probable_fit") {
+    return strong.length && !independentSupport(supports)
+      ? [`One strong, directly relevant signal: ${strong[0].label}`, ...listed.filter((l) => !l.startsWith(strong[0].label))]
+      : [`${supports.length} independent supporting signals`, ...listed];
+  }
+  if (!supports.length) return ["No commercial evidence yet; revenue, catalogue, funding and business triggers are unknown"];
+  if (independentSupport(supports) || strong.length) return ["Commercial evidence is promising, but core traits (category, direct selling, country) are not yet established", ...listed];
+  return [`Only one line of support so far; needs independent corroboration before Probable fit`, ...listed];
 }
 
 function unresolvedTraits(r: Record<FactAttribute, ResolvedAttribute>, input: ProspectScoreInput): string[] {

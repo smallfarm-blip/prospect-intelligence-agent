@@ -3,6 +3,8 @@ export const FIT_STATUSES: FitStatus[] = ['verified_fit', 'probable_fit', 'needs
 
 export type ProspectDecisionKind = 'shortlist' | 'hold' | 'defer' | 'reject' | 'reopen' | 'request_research';
 export type Confidence = 'low' | 'medium' | 'high';
+export type DiscoverySegment = 'emerging' | 'growing' | 'established';
+export const DISCOVERY_SEGMENTS: DiscoverySegment[] = ['emerging', 'growing', 'established'];
 export type FactStatus = 'verified' | 'provider_estimate' | 'inferred' | 'unknown' | 'contradicted';
 export type ReviewerFactStatus = 'verified' | 'inferred' | 'contradicted';
 
@@ -42,6 +44,24 @@ export interface ScoreComponent {
   items: ScoreItem[];
 }
 
+export type AssessmentKey = 'commercial_capacity' | 'need_for_help' | 'accessibility' | 'opportunity_relevance';
+export type AssessmentLevel = 'strong' | 'moderate' | 'weak' | 'unknown';
+
+export interface Assessment {
+  key: AssessmentKey;
+  label: string;
+  level: AssessmentLevel;
+  strengths: string[];
+  risks: string[];
+  unknowns: string[];
+}
+
+export interface Qualification {
+  assessments: Assessment[];
+  tradeOffs: string[];
+  fitBasis?: string[];
+}
+
 export interface ProspectScore {
   id: string;
   company_id: string;
@@ -58,6 +78,7 @@ export interface ProspectScore {
   commercial_relevance: string;
   organizational_fit: string;
   recommended_action: string;
+  qualification: Qualification | null;
   computed_at: string;
 }
 
@@ -118,6 +139,7 @@ export interface ProspectSource {
   excerpt: string | null;
   rank: number | null;
   outcome: string | null;
+  discovery_segment: DiscoverySegment | null;
   created_at: string;
   provider_calls: { provider: string; query: string | null; method: string | null } | null;
 }
@@ -155,6 +177,10 @@ export interface DecisionMakerRow {
   source_url: string | null;
   provider: string | null;
   source_published_at: string | null;
+  match_confidence: Confidence | null;
+  employment_status: 'current' | 'undated' | 'unverified' | null;
+  role_started_on: string | null;
+  match_basis: string | null;
   discovered_at: string;
   decision_maker_reviews: DecisionMakerReview[];
 }
@@ -166,11 +192,25 @@ export interface ProspectDetail {
   decisionMakers: DecisionMakerRow[];
 }
 
+export interface ResearchRunSummary {
+  id: string;
+  company_id: string;
+  status: string;
+  finding_count: number;
+  analyst_model: string;
+  estimated_cost_usd: number;
+  billed_cost_usd: number | null;
+  started_at: string;
+  research_runs: { estimated_cost_usd: number | null } | null;
+}
+
 export interface ProspectBoard {
   prospects: ProspectRow[];
   scores: ProspectScore[];
   overrides: ProspectOverride[];
   decisions: ProspectDecision[];
+  segments: Array<{ company_id: string; discovery_segment: DiscoverySegment }>;
+  research: ResearchRunSummary[];
   spentUsd: number;
 }
 

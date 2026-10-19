@@ -205,6 +205,10 @@ export class SupabaseProspectStore implements ProspectStore {
           provider: d.provider,
           source_published_at: d.sourcePublishedAt,
           provider_call_id: d.providerCallId,
+          match_confidence: d.matchConfidence,
+          employment_status: d.employmentStatus,
+          role_started_on: d.roleStartedOn,
+          match_basis: clip(d.matchBasis, 300),
         })),
         { onConflict: "company_id,profile_url", ignoreDuplicates: true },
       ),
@@ -443,9 +447,22 @@ export class SupabaseProspectStore implements ProspectStore {
   }
 
   private async decisionMakersFor(ids: string[]): Promise<Map<string, DecisionMaker[]>> {
-    const rows = await this.rowsFor<{ id: string; company_id: string; name: string; title: string | null; role_category: DecisionMaker["roleCategory"]; profile_url: string | null; source_url: string | null; source_published_at: string | null }>(
+    const rows = await this.rowsFor<{
+      id: string;
+      company_id: string;
+      name: string;
+      title: string | null;
+      role_category: DecisionMaker["roleCategory"];
+      profile_url: string | null;
+      source_url: string | null;
+      source_published_at: string | null;
+      match_confidence: DecisionMaker["matchConfidence"];
+      employment_status: DecisionMaker["employmentStatus"];
+      role_started_on: string | null;
+      match_basis: string | null;
+    }>(
       "decision_makers",
-      "id, company_id, name, title, role_category, profile_url, source_url, source_published_at, discovered_at",
+      "id, company_id, name, title, role_category, profile_url, source_url, source_published_at, match_confidence, employment_status, role_started_on, match_basis, discovered_at",
       "discovered_at",
       ids,
     );
@@ -461,7 +478,19 @@ export class SupabaseProspectStore implements ProspectStore {
     const map = new Map<string, DecisionMaker[]>();
     for (const r of rows) {
       const list = map.get(r.company_id) ?? [];
-      list.push({ name: r.name, title: r.title, roleCategory: r.role_category, profileUrl: r.profile_url, sourceUrl: r.source_url, sourcePublishedAt: r.source_published_at, review: reviews.get(r.id) ?? null });
+      list.push({
+        name: r.name,
+        title: r.title,
+        roleCategory: r.role_category,
+        profileUrl: r.profile_url,
+        sourceUrl: r.source_url,
+        sourcePublishedAt: r.source_published_at,
+        matchConfidence: r.match_confidence,
+        employmentStatus: r.employment_status,
+        roleStartedOn: r.role_started_on,
+        matchBasis: r.match_basis,
+        review: reviews.get(r.id) ?? null,
+      });
       map.set(r.company_id, list);
     }
     return map;

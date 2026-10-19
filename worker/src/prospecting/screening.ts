@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { formatIssues } from "../analysis/schemas.ts";
-import { BUSINESS_MODELS, CATEGORIES, ROLE_CATEGORIES, SIGNAL_TYPES, type RoleCategory, type Signal } from "./types.ts";
+import { BUSINESS_MODELS, CATEGORIES, SIGNAL_TYPES, type Confidence, type RoleCategory, type Signal, type WorkRole } from "./types.ts";
 import type { NewDecisionMaker, NewFact } from "./ports.ts";
 import type { SearchHit } from "./provider.ts";
 
@@ -130,36 +130,101 @@ const ROLE_PATTERNS: Array<[RoleCategory, RegExp]> = [
 ];
 
 const NAME = /^[\p{Lu}][\p{L}'.-]+(?: [\p{Lu}][\p{L}'.-]+){1,3}$/u;
+const CONFIDENCE_RANK: Record<Confidence, number> = { high: 3, medium: 2, low: 1 };
 
-/** Keeps people results that clearly mention the company and hold a relevant role. Stores name, role and public URLs only. */
+const normName = (s: string) =>
+  s
+    .toLowerCase()
+    .replace(/&/g, "and")
+    .replace(/\b(inc|llc|ltd|corp|co|company|brands?|clothing|apparel)\b\.?/g, "")
+    .replace(/[^a-z0-9]/g, "");
+
+/** exact: same normalised name or the company's own domain; loose: one name contains the other. */
+function companyMatch(role: WorkRole, company: { name: string; domain: string }): "exact" | "loose" | null {
+  const target = normName(company.name);
+  const root = normName(company.domain.split(".")[0] ?? "");
+  const ref = role.companyRef?.toLowerCase() ?? "";
+  if (ref.includes(company.domain)) return "exact";
+  const n = role.companyName ? normName(role.companyName) : "";
+  if (n && (n === target || n === root)) return "exact";
+  if (n.length >= 4 && target.length >= 4 && (n.includes(target) || target.includes(n))) return "loose";
+  if (root.length >= 5 && ref.replace(/[^a-z0-9]/g, "").includes(root)) return "loose";
+  return null;
+}
+
+const OPEN_END = /^(present|current|now)$/i;
+
+function isoDay(v: string | null): string | null {
+  const m = v?.match(/^(\d{4})(?:-(\d{2}))?(?:-(\d{2}))?/);
+  return m ? `${m[1]}-${m[2] ?? "01"}-${m[3] ?? "01"}` : null;
+}
+
+export type PersonMatch = { ok: true; dm: NewDecisionMaker } | { ok: false; reason: string; name: string | null };
+
+/**
+ * Ties one people-search result to the company. Structured work history wins: only a dated role with
+ * no end date counts as current. Undated roles are kept as low confidence, ended roles are dropped,
+ * and results without structured history fall back to the page title at low confidence.
+ */
+export function matchPerson(hit: SearchHit, company: { name: string; domain: string }, provider: string, providerCallId: string | null): PersonMatch {
+  const isProfile = /linkedin\.com\/in\/|\/about|\/team/i.test(hit.url);
+  const base = { profileUrl: isProfile ? hit.url : null, sourceUrl: hit.url, sourcePublishedAt: hit.publishedDate, provider, providerCallId };
+  const roleOf = (title: string | null): RoleCategory => ROLE_PATTERNS.find(([, re]) => re.test(title ?? ""))?.[0] ?? "other";
+
+  const person = hit.person;
+  if (person && person.workHistory.length) {
+    const name = person.name && person.name.length >= 2 && person.name.length <= 120 && !/linkedin|\|/i.test(person.name) ? person.name : null;
+    if (!name) return { ok: false, reason: "no usable name", name: null };
+    const roles = person.workHistory.map((r) => ({ r, match: companyMatch(r, company) })).filter((x) => x.match);
+    if (!roles.length) return { ok: false, reason: "work history shows no role at this company", name };
+    const current = roles.filter(({ r }) => r.from && (!r.to || OPEN_END.test(r.to))).sort((a, b) => (b.r.from ?? "").localeCompare(a.r.from ?? ""));
+    const undated = roles.filter(({ r }) => !r.from && !r.to);
+    const pick = current[0] ?? undated[0];
+    if (!pick) return { ok: false, reason: "only former roles at this company", name };
+    const role = roleOf(pick.r.title);
+    if (role === "other") return { ok: false, reason: `role not relevant (${pick.r.title ?? "no title"})`, name };
+    const at = pick.r.companyName ?? company.name;
+    const isCurrent = pick === current[0];
+    return {
+      ok: true,
+      dm: {
+        ...base,
+        name,
+        title: pick.r.title?.slice(0, 200) ?? null,
+        roleCategory: role,
+        matchConfidence: isCurrent ? (pick.match === "exact" ? "high" : "medium") : "low",
+        employmentStatus: isCurrent ? "current" : "undated",
+        roleStartedOn: isCurrent ? isoDay(pick.r.from) : null,
+        matchBasis: (isCurrent
+          ? `${provider} work history: "${pick.r.title ?? "role"}" at ${at} since ${pick.r.from}, no end date`
+          : `${provider} work history lists "${pick.r.title ?? "role"}" at ${at} without dates; current employment not confirmed`
+        ).slice(0, 300),
+      },
+    };
+  }
+
+  const haystack = `${hit.title ?? ""} ${hit.excerpt ?? ""}`.toLowerCase();
+  if (!haystack.includes(company.name.toLowerCase()) && !haystack.includes(company.domain.split(".")[0]!)) return { ok: false, reason: "does not mention the company", name: null };
+  const parts = (hit.title ?? "").split(/\s[|\-–—]\s|,\s/).map((p) => p.trim()).filter(Boolean);
+  const name = (hit.author && NAME.test(hit.author) ? hit.author : parts.find((p) => NAME.test(p))) ?? null;
+  if (!name) return { ok: false, reason: "no usable name", name: null };
+  const roleText = parts.filter((p) => p !== name && !/linkedin/i.test(p)).join(" - ").slice(0, 200) || null;
+  const role = roleOf(roleText);
+  if (role === "other") return { ok: false, reason: "role not relevant", name };
+  return {
+    ok: true,
+    dm: { ...base, name, title: roleText, roleCategory: role, matchConfidence: "low", employmentStatus: "unverified", roleStartedOn: null, matchBasis: "Matched from the page title only; role and current employment not confirmed" },
+  };
+}
+
+/** Keeps up to three people in relevant roles at the company, strongest match first. */
 export function parsePeopleHits(hits: SearchHit[], company: { name: string; domain: string }, provider: string, providerCallId: string | null): NewDecisionMaker[] {
   const out: NewDecisionMaker[] = [];
-  const brand = company.name.toLowerCase();
-  const root = company.domain.split(".")[0];
   for (const hit of hits) {
-    const haystack = `${hit.title ?? ""} ${hit.excerpt ?? ""}`.toLowerCase();
-    if (!haystack.includes(brand) && !haystack.includes(root)) continue;
-    const parts = (hit.title ?? "").split(/\s[|\-–—]\s|,\s/).map((p) => p.trim()).filter(Boolean);
-    const name = (hit.author && NAME.test(hit.author) ? hit.author : parts.find((p) => NAME.test(p))) ?? null;
-    if (!name) continue;
-    const roleText = parts.filter((p) => p !== name && !/linkedin/i.test(p)).join(" - ").slice(0, 200) || null;
-    const role = ROLE_PATTERNS.find(([, re]) => re.test(roleText ?? ""))?.[0] ?? "other";
-    if (role === "other") continue;
-    if (out.some((d) => d.name === name)) continue;
-    const isProfile = /linkedin\.com\/in\/|\/about|\/team/i.test(hit.url);
-    out.push({
-      name,
-      title: roleText,
-      roleCategory: (ROLE_CATEGORIES as readonly string[]).includes(role) ? role : "other",
-      profileUrl: isProfile ? hit.url : null,
-      sourceUrl: hit.url,
-      sourcePublishedAt: hit.publishedDate,
-      provider,
-      providerCallId,
-    });
-    if (out.length >= 3) break;
+    const m = matchPerson(hit, company, provider, providerCallId);
+    if (m.ok && !out.some((d) => d.name === m.dm.name)) out.push(m.dm);
   }
-  return out;
+  return out.sort((a, b) => CONFIDENCE_RANK[b.matchConfidence ?? "low"] - CONFIDENCE_RANK[a.matchConfidence ?? "low"]).slice(0, 3);
 }
 
 export function mentionsCompany(hit: SearchHit, company: { name: string; domain: string }): boolean {

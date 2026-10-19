@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { classifyFit, rankProspects, resolveAttribute, scoreProspect, type ProspectScoreInput } from "../src/prospecting/scoring.ts";
-import type { Fact, Signal } from "../src/prospecting/types.ts";
+import type { DecisionMaker, Fact, Signal } from "../src/prospecting/types.ts";
 import { fact } from "./helpers/prospectFixtures.ts";
 
 const base = (over: Partial<ProspectScoreInput> = {}): ProspectScoreInput => ({ facts: [], signals: [], decisionMakers: [], screened: false, excludedReason: null, ...over });
@@ -103,11 +103,20 @@ test("a visible UX issue alone does not create commercial relevance", () => {
 });
 
 test("decision-maker points: confirmed target role 10, possible 4, none 0", () => {
-  const dm = { name: "Ana Ruiz", title: "Founder", roleCategory: "founder" as const, profileUrl: null, sourceUrl: "https://x.example", sourcePublishedAt: null };
+  const dm = { name: "Ana Ruiz", title: "Founder", roleCategory: "founder" as const, profileUrl: null, sourceUrl: "https://x.example", sourcePublishedAt: null, matchConfidence: "high" as const, employmentStatus: "current" as const, roleStartedOn: "2016-01-01", matchBasis: null };
   const pts = (review: "confirmed" | "rejected" | null) => scoreProspect(base({ decisionMakers: [{ ...dm, review }] })).components.find((c) => c.key === "decision_maker")!.evidence;
   assert.equal(pts("confirmed"), 10);
   assert.equal(pts(null), 4);
   assert.equal(pts("rejected"), 0);
+});
+
+test("an unconfirmed low-confidence match (undated or title-only role) earns no decision-maker points", () => {
+  const dm: DecisionMaker = { name: "Ana Ruiz", title: "Founder", roleCategory: "founder", profileUrl: null, sourceUrl: "https://x.example", sourcePublishedAt: null, matchConfidence: null, employmentStatus: null, roleStartedOn: null, matchBasis: null, review: null };
+  const item = (d: Pick<DecisionMaker, "matchConfidence" | "employmentStatus">) => scoreProspect(base({ decisionMakers: [{ ...dm, ...d }] })).components.find((c) => c.key === "decision_maker")!.items[0]!;
+  const weak = item({ matchConfidence: "low", employmentStatus: "undated" });
+  assert.equal(weak.evidence, 0);
+  assert.match(weak.note, /weak lead only/);
+  assert.equal(item({ matchConfidence: null, employmentStatus: null }).evidence, 4, "records stored before match evidence keep their previous treatment");
 });
 
 test("the score stays within 0-100 and the score range is ordered", () => {

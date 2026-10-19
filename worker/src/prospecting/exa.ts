@@ -1,6 +1,6 @@
 import { ModelCallError, postJson } from "../analysis/model.ts";
 import type { DiscoveryProvider, SearchHit, SearchRequest, SearchResponse } from "./provider.ts";
-import type { CompanyEntity } from "./types.ts";
+import type { CompanyEntity, PersonEntity, WorkRole } from "./types.ts";
 
 export interface ExaPricing {
   searchUsdPer1k: number;
@@ -83,6 +83,7 @@ export function parseExaResponse(raw: unknown): SearchResponse {
       author: str(r.author),
       excerpt: excerpt ? excerpt.slice(0, 600) : null,
       entity: parseCompanyEntity(r.entities),
+      person: parsePersonEntity(r.entities),
     });
   }
   const total = numberish(data.costDollars?.total);
@@ -110,6 +111,23 @@ export function parseCompanyEntity(entities: unknown): CompanyEntity | null {
     fundingTotalUsd: numberish(fin.fundingTotal),
     latestRound: hasRound ? { name: str(round.name), date: str(round.date), amountUsd: numberish(round.amount) } : null,
   };
+}
+
+/** Reads Exa `type: "person"` entities (name, firstName/lastName, workHistory). Location and education are dropped. */
+export function parsePersonEntity(entities: unknown): PersonEntity | null {
+  if (!Array.isArray(entities)) return null;
+  const person = entities.find((e) => e && typeof e === "object" && (e as { type?: unknown }).type === "person") as { properties?: Record<string, unknown> } | undefined;
+  const p = person?.properties;
+  if (!p || typeof p !== "object") return null;
+  const obj = (v: unknown) => (v && typeof v === "object" ? (v as Record<string, unknown>) : {});
+  const joined = [str(p.firstName), str(p.lastName)].filter(Boolean).join(" ");
+  const workHistory: WorkRole[] = (Array.isArray(p.workHistory) ? p.workHistory : []).map((w) => {
+    const entry = obj(w);
+    const company = obj(entry.company);
+    const dates = obj(entry.dates);
+    return { title: str(entry.title), companyName: str(company.name), companyRef: str(company.id), from: str(dates.from), to: str(dates.to) };
+  });
+  return { name: str(p.name) ?? (joined || null), workHistory };
 }
 
 function str(v: unknown): string | null {

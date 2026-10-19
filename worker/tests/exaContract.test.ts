@@ -100,7 +100,7 @@ test("Parsed hits keep only the approved retention scope", () => {
   const hit = res.hits[0]!;
   assert.equal(hit.excerpt!.length, 600);
   assert.ok(hit.entity!.description!.length <= 1000);
-  assert.deepEqual(Object.keys(hit).sort(), ["author", "entity", "excerpt", "publishedDate", "title", "url"]);
+  assert.deepEqual(Object.keys(hit).sort(), ["author", "entity", "excerpt", "person", "publishedDate", "title", "url"]);
   assert.ok(!("address" in hit.entity!) && !("webTraffic" in hit.entity!));
 });
 

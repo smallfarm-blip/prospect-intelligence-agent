@@ -1,4 +1,4 @@
-import type { CompanyEntity } from "./types.ts";
+import type { CompanyEntity, PersonEntity } from "./types.ts";
 
 export type SearchOperation = "company_search" | "web_search" | "people_search" | "evidence_search";
 
@@ -18,6 +18,7 @@ export interface SearchHit {
   author: string | null;
   excerpt: string | null;
   entity: CompanyEntity | null;
+  person: PersonEntity | null;
 }
 
 export interface SearchResponse {

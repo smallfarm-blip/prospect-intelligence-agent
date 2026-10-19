@@ -61,8 +61,16 @@ export interface DecisionMaker {
   profileUrl: string | null;
   sourceUrl: string | null;
   sourcePublishedAt: string | null;
+  /** Null on records stored before match evidence was captured. */
+  matchConfidence: Confidence | null;
+  employmentStatus: EmploymentStatus | null;
+  roleStartedOn: string | null;
+  matchBasis: string | null;
   review: "confirmed" | "rejected" | null;
 }
+
+/** current: dated role with no end date. undated: matching role without dates. unverified: title or snippet only. */
+export type EmploymentStatus = "current" | "undated" | "unverified";
 
 export type FitStatus = "verified_fit" | "probable_fit" | "needs_qualification" | "not_fit";
 
@@ -77,4 +85,19 @@ export interface CompanyEntity {
   revenueAnnualUsd: number | null;
   fundingTotalUsd: number | null;
   latestRound: { name: string | null; date: string | null; amountUsd: number | null } | null;
+}
+
+export interface WorkRole {
+  title: string | null;
+  companyName: string | null;
+  /** Provider company reference, often a URL. */
+  companyRef: string | null;
+  from: string | null;
+  to: string | null;
+}
+
+/** Normalised person record. Location and education are deliberately not kept (retention scope). */
+export interface PersonEntity {
+  name: string | null;
+  workHistory: WorkRole[];
 }

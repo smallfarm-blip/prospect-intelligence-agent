@@ -28,7 +28,7 @@ export function entity(over: Partial<CompanyEntity> = {}): CompanyEntity {
 }
 
 export function hit(url: string, over: Partial<SearchHit> = {}): SearchHit {
-  return { url, title: null, publishedDate: null, author: null, excerpt: null, entity: null, ...over };
+  return { url, title: null, publishedDate: null, author: null, excerpt: null, entity: null, person: null, ...over };
 }
 
 export function response(hits: SearchHit[], cost: number | null = 0.012): SearchResponse {

@@ -20,7 +20,7 @@ export interface ResolvedAttribute {
   sources: string[];
 }
 
-type Match = "match" | "partial" | "mismatch" | "unknown";
+export type Match = "match" | "partial" | "mismatch" | "unknown";
 
 interface Evaluation {
   match: Match;
@@ -175,7 +175,13 @@ function evaluate(r: ResolvedAttribute): Evaluation {
 }
 
 export function money(n: number): string {
-  return n >= 1e9 ? `$${(n / 1e9).toFixed(1)}B` : n >= 1e6 ? `$${(n / 1e6).toFixed(n >= 1e7 ? 0 : 1)}M` : `$${Math.round(n / 1e3)}K`;
+  return n >= 1e9 ? `${(n / 1e9).toFixed(1)}B` : n >= 1e6 ? `${(n / 1e6).toFixed(n >= 1e7 ? 0 : 1)}M` : `${Math.round(n / 1e3)}K`;
+}
+
+/** Judges one provider-estimated value against the ICP using the same thresholds as scoring. */
+export function evaluateEstimate(attribute: FactAttribute, valueText: string, valueNumber: number | null): { match: Match; label: string } {
+  const e = evaluate({ attribute, status: "provider_estimate", valueText, valueNumber, sources: [] });
+  return { match: e.match, label: e.label };
 }
 
 function factItem(r: ResolvedAttribute, max: number): ComponentItem {
@@ -202,10 +208,12 @@ const TARGET_ROLES = new Set(["founder", "ecommerce_lead", "growth_marketing_lea
 function decisionMakerItem(dms: DecisionMaker[]): ComponentItem {
   const max = 10;
   const confirmed = dms.filter((d) => d.review === "confirmed");
-  const possible = dms.filter((d) => d.review === null && TARGET_ROLES.has(d.roleCategory));
+  const possible = dms.filter((d) => d.review === null && TARGET_ROLES.has(d.roleCategory) && d.matchConfidence !== "low");
   if (confirmed.some((d) => TARGET_ROLES.has(d.roleCategory))) return { key: "decision_maker", label: "Reachable decision-maker", max, evidence: 10, potential: 10, status: "decision_maker", note: `confirmed: ${confirmed[0].name}` };
   if (confirmed.length) return { key: "decision_maker", label: "Reachable decision-maker", max, evidence: 6, potential: 10, status: "decision_maker", note: `confirmed contact outside target roles: ${confirmed[0].name}` };
   if (possible.length) return { key: "decision_maker", label: "Reachable decision-maker", max, evidence: 4, potential: 10, status: "decision_maker", note: `possible, not confirmed: ${possible[0].name}${possible[0].title ? ` (${possible[0].title})` : ""}` };
+  const weak = dms.find((d) => d.review === null && TARGET_ROLES.has(d.roleCategory));
+  if (weak) return { key: "decision_maker", label: "Reachable decision-maker", max, evidence: 0, potential: 10, status: "decision_maker", note: `weak lead only (current role not established): ${weak.name}` };
   return { key: "decision_maker", label: "Reachable decision-maker", max, evidence: 0, potential: 10, status: "decision_maker", note: "not identified" };
 }
 

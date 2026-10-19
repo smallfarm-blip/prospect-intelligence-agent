@@ -8,17 +8,18 @@ import { createLogger } from "../logger.ts";
 import { normalizeDomain } from "../url.ts";
 import { loadProspectingConfig, loadQueries, type ProspectingConfig } from "./config.ts";
 import { runDiscovery } from "./discover.ts";
-import { ExaProvider } from "./exa.ts";
+import { ExaProvider, parseExaResponse } from "./exa.ts";
 import { SupabaseProspectStore } from "./prospectStore.ts";
 import type { SearchRequest } from "./provider.ts";
 import { computePilotReport, formatPilotReport } from "./report.ts";
 import { rescore, screenCompany, screeningRequest } from "./screen.ts";
 import { checkSite } from "./siteCheck.ts";
 import { SpendGuard } from "./spend.ts";
-import { formatTrial, runTrial, trialRequests } from "./trial.ts";
+import { formatTrial, replayTrial, runTrial, trialRequests } from "./trial.ts";
 
 const USAGE = `Usage (every command is free unless --live is given):
   npm run prospect -- trial    [--live]                            Small Exa trial: company vs general search, people, evidence (no prospects written)
+  npm run prospect -- trial    --from output/prospecting/<file>-trial.json   Rebuild the trial report from a saved file (free, offline)
   npm run prospect -- discover [--live]                            Find up to DISCOVERY_TARGET_COMPANIES new companies
   npm run prospect -- screen   [--live] [--limit N] [--company D]  Site check, people + evidence search, AI screening, scoring
   npm run prospect -- rescore                                      Recompute scores from stored facts (free)
@@ -47,12 +48,21 @@ function describeRequests(provider: ExaProvider, reqs: Array<{ label: string; re
 async function main(): Promise<number> {
   const { values, positionals } = parseArgs({
     allowPositionals: true,
-    options: { live: { type: "boolean", default: false }, limit: { type: "string" }, company: { type: "string" } },
+    options: { live: { type: "boolean", default: false }, limit: { type: "string" }, company: { type: "string" }, from: { type: "string" } },
   });
   const command = positionals[0];
   if (!command || !["trial", "discover", "screen", "rescore", "report"].includes(command)) {
     console.error(USAGE);
     return 2;
+  }
+  if (command === "trial" && values.from) {
+    const queries = loadQueries(process.env.DISCOVERY_QUERIES_FILE ?? "config/discovery-queries.json");
+    const report = replayTrial(JSON.parse(readFileSync(resolve(values.from), "utf8")), parseExaResponse, "exa", { calibrationQueries: queries.calibration, sampleCompany: queries.sampleCompany });
+    const text = formatTrial(report, Number(process.env.TRIAL_BUDGET_USD ?? 0.15), report.totalReportedUsd);
+    const out = resolve(values.from).replace(/\.json$/, "") + "-report.txt";
+    writeFileSync(out, text);
+    console.log(`${text}\n\nReplayed from ${values.from} without any provider calls. Saved to ${out}`);
+    return 0;
   }
   const paid = command === "trial" || command === "discover" || command === "screen";
   const config = loadProspectingConfig(process.env, { live: values.live && paid, needsExa: paid, needsModel: command === "screen" });
@@ -103,10 +113,13 @@ async function main(): Promise<number> {
     const guard = new SpendGuard(new BudgetTracker(budgetUsd), (r) => store.recordCall(runId, r));
     const report = await runTrial(provider, guard, plan);
     const { raw, ...summary } = report;
-    writeFileSync(join(outDir, `${stamp()}-trial.json`), JSON.stringify(report, null, 2));
+    const base = join(outDir, `${stamp()}-trial`);
+    writeFileSync(`${base}.json`, JSON.stringify(report, null, 2));
     const refused = report.calls.some((c) => c.error?.startsWith("Refused"));
     await store.finishRun(runId, { status: refused ? "stopped_budget" : "completed", spentUsd: guard.budget.spentUsd, summary: { ...summary, rawResponses: raw.length } });
-    console.log(formatTrial(report, budgetUsd, guard.budget.spentUsd));
+    const text = formatTrial(report, budgetUsd, guard.budget.spentUsd);
+    writeFileSync(`${base}-report.txt`, text);
+    console.log(text);
     return report.calls.every((c) => !c.ok) ? 1 : 0;
   }
 

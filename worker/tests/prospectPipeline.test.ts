@@ -234,7 +234,12 @@ test("screenCompany runs searches and AI screening through the budget, then scor
   const guard = new SpendGuard(new BudgetTracker(1), (r) => store.recordCall("r", r));
   const provider = new MockDiscoveryProvider((req) =>
     req.operation === "people_search"
-      ? response([hit("https://www.linkedin.com/in/ana-ruiz", { title: "Ana Ruiz - Founder - North Wool" })])
+      ? response([
+          hit("https://www.linkedin.com/in/ana-ruiz", {
+            title: "Ana Ruiz - Founder - North Wool",
+            person: { name: "Ana Ruiz", workHistory: [{ title: "Founder", companyName: "North Wool", companyRef: null, from: "2019-03", to: null }] },
+          }),
+        ])
       : response([hit("https://news.example/nw", { title: "North Wool launches kids line", excerpt: "North Wool will launch..." }), hit("https://news.example/other", { title: "Unrelated" })]),
   );
   const model = new MockModelClient(() => ({ toolInput: screening([sig(["S2"])]), outputTokens: 800 }));
@@ -281,8 +286,16 @@ test("trial compares company and general search on the same queries and writes n
   assert.equal(trialRequests(plan).length, 6);
   const report = await runTrial(provider, new SpendGuard(new BudgetTracker(1), (r) => store.recordCall("r", r)), plan);
   assert.equal(report.calls.length, 6);
-  assert.deepEqual(report.comparisons[0], { query: "q one", company: { candidates: 2, withRevenue: 1, withHeadcount: 2 }, general: { candidates: 2 }, overlap: 1 });
-  assert.deepEqual(report.calls[0].resultFields, ["author", "entity", "excerpt", "publishedDate", "title", "url"]);
+  assert.deepEqual(report.comparisons[0], {
+    query: "q one",
+    company: { relevant: 2, withRevenue: 1, withHeadcount: 2 },
+    general: { relevant: 2 },
+    both: ["a.example"],
+    companyOnly: ["b.example"],
+    generalOnly: ["c.example"],
+  });
+  assert.deepEqual(Object.values(report.irrelevantByReason), [["amazon.com"]]);
+  assert.deepEqual(report.calls[0].resultFields, ["author", "entity", "excerpt", "person", "publishedDate", "title", "url"]);
   assert.equal(store.companies.length, 0);
   assert.equal(store.calls.length, 6);
 });

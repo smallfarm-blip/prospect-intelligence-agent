@@ -94,10 +94,12 @@ test("business triggers count toward commercial relevance, not observable need",
   const s = scoreProspect(base({ facts: probableFacts(), signals: [signal()], screened: true }));
   const commercial = s.components.find((c) => c.key === "commercial")!;
   const need = s.components.find((c) => c.key === "need")!;
-  assert.equal(commercial.items[0].evidence, 6);
+  assert.equal(commercial.items[0].evidence, 3, "a generic trigger earns half credit");
   assert.equal(need.items[0].evidence, 0);
   assert.match(s.commercialRelevance, /1 business trigger/);
   assert.ok(s.reasonsToInvestigate[0].startsWith("Launched a new home category"));
+  const linked = scoreProspect(base({ facts: probableFacts(), signals: [signal({ title: "Replatforming to Shopify Plus", observedEvidence: "The company announced it is migrating to Shopify Plus this spring." })], screened: true }));
+  assert.equal(linked.components.find((c) => c.key === "commercial")!.items[0].evidence, 6, "a trigger tied to our services earns full credit");
 });
 
 test("a visible UX issue alone does not create commercial relevance", () => {

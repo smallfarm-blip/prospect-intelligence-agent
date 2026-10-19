@@ -1,4 +1,5 @@
 import type { Match } from "./scoring.ts";
+import { byKind, classifySignal, isServiceLinked, isStrongSignal } from "./signalEvidence.ts";
 import type { Confidence, DecisionMaker, FactStatus, Signal } from "./types.ts";
 
 export type AssessmentKey = "commercial_capacity" | "need_for_help" | "accessibility" | "opportunity_relevance";
@@ -42,8 +43,9 @@ export const TARGET_ROLES = new Set(["founder", "ecommerce_lead", "growth_market
 const known = (r: Reading) => r.status !== "unknown" && r.status !== "contradicted";
 const viableRevenue = (r: Reading) => r.value !== null && r.value >= 1e6 && r.value <= 75e6;
 const est = (r: Reading) => (r.status === "verified" ? "verified" : r.status === "provider_estimate" ? "provider estimate" : "inferred");
-const strongSignal = (s: Signal) => s.confidence === "high" || s.confidence === "medium";
 const RANK: Record<Confidence, number> = { high: 3, medium: 2, low: 1 };
+const byConfidence = (xs: Signal[]) => [...xs].sort((a, b) => RANK[b.confidence] - RANK[a.confidence]);
+const tag = (s: Signal) => `${s.title} (${s.confidence} confidence)`;
 
 function level(strengths: string[], risks: string[], strongIf: boolean): AssessmentLevel {
   if (strongIf) return "strong";
@@ -65,24 +67,41 @@ function commercialCapacity(i: QualificationInput): Assessment {
   return { key: "commercial_capacity", label: "Commercial capacity", level: level(strengths, risks, verifiedRevenue || strengths.length >= 2), strengths, risks, unknowns };
 }
 
-/** Is there a visible opportunity, and is there room for outside help? */
+/**
+ * Strong needs direct evidence: an observed experience problem together with an organisational capability gap.
+ * One supported problem or gap is Moderate. Triggers, promotional offers, neutral site facts and tools not being
+ * detected never establish need on their own; they are listed as things to investigate.
+ */
 function needForHelp(i: QualificationInput): Assessment {
-  const strengths = i.experienceSignals.map((s) => `${s.title} (${s.confidence} confidence)`);
+  const k = byKind([...i.experienceSignals, ...i.businessSignals]);
+  const strengths = [
+    ...byConfidence(k.experience_problem).map((s) => `Observed experience problem: ${tag(s)}`),
+    ...byConfidence(k.capability_gap).map((s) => `Capability gap: ${tag(s)}`),
+  ];
   const risks: string[] = [];
   const unknowns: string[] = [];
+  for (const s of byConfidence(k.friction_hypothesis)) {
+    unknowns.push(s.signalType === "promotional_orchestration"
+      ? `To investigate: ${s.title}. Offer timing, targeting, relevance and orchestration are not yet assessed; several offers alone do not show harmful friction`
+      : `Possible friction, not yet supported by direct observation: ${s.title}`);
+  }
+  for (const s of k.experience_fact) unknowns.push(`Observed on the site, but not shown to be a problem: ${s.title}`);
+
   let mature = false;
   if (!known(i.experimentation)) unknowns.push("Internal UX and experimentation capability unknown");
-  else if (i.experimentation.match === "match") strengths.push("No testing or personalisation tools detected");
+  else if (i.experimentation.match === "match") strengths.push(`No testing or personalisation tools in use (${est(i.experimentation)})`);
+  else if (i.experimentation.match === "unknown") unknowns.push("Testing and personalisation maturity unknown: no tools were detected on the homepage, which does not show they are absent");
   else {
     mature = i.experimentation.label.startsWith("several");
     risks.push(mature ? `Mature experimentation stack (${i.experimentation.label}); may not need outside help` : `Already ${i.experimentation.label} for testing; check how actively it is used`);
   }
-  if (known(i.promotion) && i.promotion.match === "match") strengths.push(`Promotional tooling in use (${i.promotion.label})`);
+  if (known(i.promotion) && i.promotion.match === "match") unknowns.push(`Promotional tooling installed (${i.promotion.label}); how it is used and whether it helps or hurts visitors is unknown`);
+  if (k.commercial_trigger.length && !strengths.length) unknowns.push("Business triggers add context but do not show a need for outside CRO, UX, experimentation or personalisation help");
   if (!i.screened) unknowns.push("Site experience not screened yet");
-  else if (!i.experienceSignals.length) risks.push("Screening found no visitor-experience opportunity");
-  const strong = !mature && i.experienceSignals.some(strongSignal);
-  const lvl: AssessmentLevel = mature && !i.experienceSignals.some(strongSignal) ? "weak" : level(strengths, risks, strong);
-  return { key: "need_for_help", label: "Need for outside help", level: lvl, strengths, risks, unknowns };
+  else if (!i.experienceSignals.length) unknowns.push("Homepage screening found no specific experience problem; the wider site has not been reviewed");
+
+  const strong = !mature && k.experience_problem.length > 0 && k.capability_gap.length > 0;
+  return { key: "need_for_help", label: "Need for outside help", level: level(strengths, risks, strong), strengths, risks, unknowns };
 }
 
 /** How realistically we can reach someone able to hire a consultant. */
@@ -110,13 +129,18 @@ function accessibility(i: QualificationInput): Assessment {
   return { key: "accessibility", label: "Decision-maker accessibility", level: level(strengths, risks, strong), strengths, risks, unknowns };
 }
 
-/** Do the company's current priorities connect to our services? */
+/**
+ * Do the company's current priorities connect to our services? Any trigger is business context (Moderate);
+ * Strong needs a strong signal whose observed evidence ties directly to the work we do.
+ */
 function opportunityRelevance(i: QualificationInput): Assessment {
-  const sorted = [...i.businessSignals].sort((a, b) => RANK[b.confidence] - RANK[a.confidence]);
-  const strengths = sorted.map((s) => `${s.title} (${s.confidence} confidence)`);
+  const sorted = byConfidence(i.businessSignals);
+  const linked = sorted.filter((s) => isServiceLinked(s) || classifySignal(s) === "capability_gap");
+  const strengths = sorted.map((s) => (linked.includes(s) ? `Linked to our services: ${tag(s)}` : `Business context: ${tag(s)}`));
   const risks = i.screened && !sorted.length ? ["Screening found no current business priority such as a launch, expansion or relaunch"] : [];
   const unknowns = i.screened ? [] : ["Business priorities not screened yet"];
-  const strong = sorted.some((s) => s.confidence === "high") || sorted.length >= 2;
+  if (sorted.length && !linked.length) unknowns.push("No specific link yet between this business activity and conversion, UX, experimentation or personalisation work");
+  const strong = linked.some(isStrongSignal) || linked.length >= 2;
   return { key: "opportunity_relevance", label: "Opportunity relevance", level: level(strengths, risks, strong), strengths, risks, unknowns };
 }
 
@@ -134,6 +158,7 @@ function tradeOffs(a: Record<AssessmentKey, Assessment>): string[] {
   if (good(cap) && shaky(access)) out.push("Likely able to pay, but reaching someone with authority to hire a consultant may be hard.");
   if (good(cap) && need.level === "weak") out.push("Has commercial capacity, but little demonstrated need for outside help.");
   if (good(need) && shaky(rel)) out.push("Visible site opportunities, but no evidence they are a current business priority.");
+  if (good(rel) && shaky(need)) out.push("Current business activity gives context, but a need for outside help is not established yet.");
   return out;
 }
 

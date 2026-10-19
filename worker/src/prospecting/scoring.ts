@@ -1,7 +1,8 @@
 import { assessQualification, TARGET_ROLES, type Assessment } from "./qualification.ts";
+import { byKind, classifySignal, isBusinessSignal, isServiceLinked, isStrongSignal, type EvidenceKind } from "./signalEvidence.ts";
 import { TARGET_CATEGORIES, type Confidence, type DecisionMaker, type Fact, type FactAttribute, type FactSourceType, type FactStatus, type FitStatus, type Signal } from "./types.ts";
 
-export const SCORING_VERSION = "prospect-score-v3";
+export const SCORING_VERSION = "prospect-score-v4";
 
 export const SCORED_ATTRIBUTES = ["category", "sells_dtc", "business_model", "hq_country", "revenue_annual_usd", "employee_count", "funding_total_usd", "leadership_model", "experimentation_tools", "promotion_tools", "catalog_size"] as const;
 
@@ -196,8 +197,9 @@ function evaluate(r: ResolvedAttribute): Evaluation {
     case "leadership_model":
       return /founder|lean/.test(v) ? { match: "match", factor: 1, label: r.valueText } : { match: "partial", factor: 0.4, label: r.valueText };
     case "experimentation_tools":
-      if (v === "none detected") return { match: "match", factor: 1, label: "no testing tools detected" };
-      return /,/.test(v) ? { match: "partial", factor: 0.15, label: `several tools: ${r.valueText}` } : { match: "partial", factor: 0.5, label: `uses ${r.valueText}` };
+      // Homepage detection cannot show absence; only a verified "none" is evidence of room to help.
+      if (v === "none detected") return r.status === "verified" ? { match: "match", factor: 1, label: "no testing or personalisation tools in use" } : { match: "unknown", factor: 0, label: "no testing tools detected; maturity unknown" };
+      return /,/.test(v) ? { match: "mismatch", factor: 0, label: `several tools: ${r.valueText}` } : { match: "partial", factor: 0, label: `uses ${r.valueText}` };
     case "promotion_tools":
       return v === "none detected" ? { match: "partial", factor: 0.3, label: "no pop-up or capture tools detected" } : { match: "match", factor: 1, label: r.valueText };
     case "catalog_size":
@@ -222,7 +224,7 @@ function factItem(r: ResolvedAttribute, max: number): ComponentItem {
   const e = evaluate(r);
   const evidence = max * STATUS_WEIGHT[r.status] * e.factor;
   let potential: number;
-  if (r.status === "unknown" || r.status === "contradicted") potential = max;
+  if (r.status === "unknown" || r.status === "contradicted" || e.match === "unknown") potential = max;
   else if (r.status === "verified") potential = evidence;
   else potential = e.match === "mismatch" ? max * 0.3 : max * Math.max(e.factor, 0.4);
   return { key: r.attribute, label: LABELS[r.attribute] ?? r.attribute, max, evidence, potential: Math.max(potential, evidence), status: r.status, note: e.label };
@@ -230,12 +232,26 @@ function factItem(r: ResolvedAttribute, max: number): ComponentItem {
 
 const SIGNAL_POINTS: Record<Confidence, number> = { high: 6, medium: 4, low: 2 };
 
-function signalItem(key: string, label: string, signals: Signal[], max: number, screened: boolean): ComponentItem {
-  const evidence = Math.min(max, signals.reduce((s, sig) => s + SIGNAL_POINTS[sig.confidence], 0));
-  const potential = screened ? Math.min(max, evidence + max * 0.25) : max;
-  const note = signals.length ? signals.map((s) => s.title).join("; ") : screened ? "none found in screening" : "not screened yet";
+const KIND_NOTE: Record<EvidenceKind, string> = {
+  experience_problem: "observed problem",
+  experience_fact: "observed, not shown to be a problem",
+  friction_hypothesis: "to investigate",
+  capability_gap: "capability gap",
+  commercial_trigger: "business context",
+};
+
+/** `credit` is the share of a signal's points it earns now; the rest stays as upside until it is validated. */
+function signalItem(key: string, label: string, signals: Signal[], max: number, screened: boolean, credit: (s: Signal) => number, alwaysOpen = false): ComponentItem {
+  const evidence = Math.min(max, signals.reduce((sum, s) => sum + SIGNAL_POINTS[s.confidence] * credit(s), 0));
+  const unrealised = signals.reduce((sum, s) => sum + SIGNAL_POINTS[s.confidence] * (1 - credit(s)), 0);
+  const potential = screened && !alwaysOpen ? Math.min(max, evidence + max * 0.25 + unrealised) : max;
+  const note = signals.length
+    ? signals.map((s) => `${s.title} (${KIND_NOTE[classifySignal(s)]})`).join("; ")
+    : screened ? "none found in screening" : "not screened yet";
   return { key, label, max, evidence, potential, status: "signal", note };
 }
+
+const HYPOTHESIS_CREDIT = 1 / 6;
 
 function decisionMakerItem(dms: DecisionMaker[]): ComponentItem {
   const max = 10;
@@ -253,8 +269,6 @@ function component(key: ScoreComponent["key"], label: string, max: number, items
   return { key, label, max, evidence: items.reduce((s, i) => s + i.evidence, 0), potential: Math.min(max, items.reduce((s, i) => s + i.potential, 0)), items };
 }
 
-const BUSINESS_SIGNALS = new Set(["business_trigger", "growth_initiative", "organizational_change"]);
-
 export function scoreProspect(input: ProspectScoreInput): ProspectScore {
   const r = Object.fromEntries(
     SCORED_ATTRIBUTES.map((a) => [a, resolveAttribute(input.facts, a)]),
@@ -265,16 +279,19 @@ export function scoreProspect(input: ProspectScoreInput): ProspectScore {
   // points; they inform the accessibility assessment only, so size never adds or removes points.
   const fit = component("fit", "Organisational fit", 35, [factItem(r.category, 12), factItem(r.sells_dtc, 9), factItem(r.business_model, 8), factItem(r.hq_country, 6)]);
 
-  const experienceSignals = input.signals.filter((s) => !BUSINESS_SIGNALS.has(s.signalType));
-  const businessSignals = input.signals.filter((s) => BUSINESS_SIGNALS.has(s.signalType));
+  // Need comes only from observed problems and capability gaps. Commercial triggers feed relevance; promotional
+  // offers, neutral site facts and tool detection are things to investigate and earn a token amount at most.
+  const experienceSignals = input.signals.filter((s) => !isBusinessSignal(s));
+  const businessSignals = input.signals.filter(isBusinessSignal);
+  const kinds = byKind(input.signals);
   const need = component("need", "Need for outside help", 25, [
-    signalItem("experience_signals", "Visitor-experience and promotion signals", experienceSignals, 15, input.screened),
+    signalItem("experience_signals", "Visitor-experience evidence", experienceSignals, 13, input.screened, (s) => (classifySignal(s) === "experience_problem" ? 1 : HYPOTHESIS_CREDIT)),
+    signalItem("capability_gap", "Organisational capability gap", kinds.capability_gap, 6, input.screened, () => 1, true),
     factItem(r.experimentation_tools, 6),
-    factItem(r.promotion_tools, 4),
   ]);
 
   const commercial = component("commercial", "Commercial capacity and opportunity relevance", 20, [
-    signalItem("business_signals", "Business triggers and growth initiatives", businessSignals, 10, input.screened),
+    signalItem("business_signals", "Business context (triggers and growth initiatives)", kinds.commercial_trigger, 10, input.screened, (s) => (isServiceLinked(s) ? 1 : 0.5)),
     { ...factItem(r.revenue_annual_usd, 5), label: "Revenue (can fund a $4,500 sprint)" },
     factItem(r.catalog_size, 3),
     factItem(r.funding_total_usd, 2),
@@ -366,11 +383,6 @@ const originOf = (r: ResolvedAttribute): SupportOrigin => {
   return o === "ai_screening" || o === undefined ? "company_site" : o;
 };
 
-/** A business signal is strong only when it is high confidence, sourced and explains its relevance. */
-export function isStrongSignal(s: Signal): boolean {
-  return s.confidence === "high" && s.sourceUrls.length > 0 && s.observedEvidence.trim().length >= 20 && s.businessRelevance.trim().length >= 20;
-}
-
 /** Commercial evidence that could lift a company above Needs qualification. Headcount is never support. */
 export function fitSupports(r: Record<FactAttribute, ResolvedAttribute>, businessSignals: Signal[]): FitSupport[] {
   const out: FitSupport[] = [];
@@ -451,7 +463,6 @@ function reasons(r: Record<FactAttribute, ResolvedAttribute>, business: Signal[]
   const rev = evaluate(r.revenue_annual_usd);
   if (rev.match === "match") out.push(`Revenue ${rev.label}, ${STATUS_LABEL[r.revenue_annual_usd.status]}`);
   if (ok(r.sells_dtc, "inferred")) out.push(`Sells direct to consumers (${STATUS_LABEL[r.sells_dtc.status]})`);
-  if (evaluate(r.experimentation_tools).match === "match") out.push("No testing or personalisation tools detected on the homepage");
   return out.slice(0, 4);
 }
 

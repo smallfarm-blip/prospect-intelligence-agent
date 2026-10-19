@@ -6,8 +6,12 @@ import type { DiscoveryProvider, SearchHit } from "./provider.ts";
 import type { SpendGuard } from "./spend.ts";
 import type { CompanyEntity } from "./types.ts";
 
+export const DISCOVERY_SEGMENTS = ["emerging", "growing", "established"] as const;
+export type DiscoverySegment = (typeof DISCOVERY_SEGMENTS)[number];
+
 export interface DiscoveryQuery {
   id: string;
+  segment: DiscoverySegment;
   operation: "company_search" | "web_search";
   query: string;
 }
@@ -30,6 +34,8 @@ export interface DiscoverySummary {
   excludedCompanies: number;
   duplicates: number;
   skipped: Array<{ domain: string; reason: string; queryId: string }>;
+  bySegment: Record<DiscoverySegment, { queriesRun: number; newCompanies: number; capped: boolean }>;
+  segmentCap: number;
   stoppedBy: "target_reached" | "queries_exhausted" | "budget";
 }
 
@@ -54,19 +60,40 @@ function hitDomain(hit: SearchHit): string | null {
   }
 }
 
+/** Alternates segments (emerging, growing, established, emerging, ...) keeping each segment's own query order. */
+export function interleaveBySegment(queries: DiscoveryQuery[]): DiscoveryQuery[] {
+  const lanes = DISCOVERY_SEGMENTS.map((seg) => queries.filter((q) => q.segment === seg));
+  const out: DiscoveryQuery[] = [];
+  for (let i = 0; out.length < queries.length; i++) for (const lane of lanes) if (lane[i]) out.push(lane[i]);
+  return out;
+}
+
 /**
- * Runs queries in order until `targetCompanies` new candidates (deduplicated by canonical domain)
- * are stored, the queries run out, or the budget refuses the next call. Every result is recorded
- * as a sighting with its rank and outcome; nothing is ever overwritten.
+ * Runs queries alternating between segments until `targetCompanies` new candidates (deduplicated by
+ * canonical domain) are stored, the queries run out, or the budget refuses the next call. No segment
+ * may contribute more than `maxSegmentShare` of the target, so one segment cannot dominate the pilot;
+ * a capped segment's remaining queries are not called. Segments are discovery categories only: size
+ * is never used to filter. Every result is recorded as a sighting with its rank, segment and outcome.
  */
-export async function runDiscovery(deps: DiscoveryDeps, queries: DiscoveryQuery[], opts: { numResults: number; targetCompanies: number }): Promise<DiscoverySummary> {
-  const s: DiscoverySummary = { queriesRun: 0, queriesRefused: 0, queriesFailed: 0, results: 0, newCompanies: 0, excludedCompanies: 0, duplicates: 0, skipped: [], stoppedBy: "queries_exhausted" };
+export async function runDiscovery(
+  deps: DiscoveryDeps,
+  queries: DiscoveryQuery[],
+  opts: { numResults: number; targetCompanies: number; maxSegmentShare: number },
+): Promise<DiscoverySummary> {
+  const segmentCap = Math.max(1, Math.ceil(opts.targetCompanies * opts.maxSegmentShare));
+  const bySegment = Object.fromEntries(DISCOVERY_SEGMENTS.map((seg) => [seg, { queriesRun: 0, newCompanies: 0, capped: false }])) as DiscoverySummary["bySegment"];
+  const s: DiscoverySummary = { queriesRun: 0, queriesRefused: 0, queriesFailed: 0, results: 0, newCompanies: 0, excludedCompanies: 0, duplicates: 0, skipped: [], bySegment, segmentCap, stoppedBy: "queries_exhausted" };
   const seen = new Map<string, string>();
 
-  for (const q of queries) {
+  for (const q of interleaveBySegment(queries)) {
     if (s.newCompanies >= opts.targetCompanies) {
       s.stoppedBy = "target_reached";
       break;
+    }
+    const seg = bySegment[q.segment];
+    if (seg.newCompanies >= segmentCap) {
+      seg.capped = true;
+      continue;
     }
     const req = { operation: q.operation, query: q.query, numResults: opts.numResults };
     const res = await deps.guard.search(deps.provider, req);
@@ -82,6 +109,7 @@ export async function runDiscovery(deps: DiscoveryDeps, queries: DiscoveryQuery[
       continue;
     }
     s.queriesRun++;
+    seg.queriesRun++;
     s.results += res.value.hits.length;
     const checkedAt = new Date().toISOString();
     const domains = res.value.hits.map(hitDomain).filter((d): d is string => !!d);
@@ -106,6 +134,7 @@ export async function runDiscovery(deps: DiscoveryDeps, queries: DiscoveryQuery[
         excerpt: hit.excerpt,
         rank: i + 1,
         outcome,
+        discoverySegment: q.segment,
         providerRecord: hit.entity ? { ...hit.entity } : null,
       });
       const known = existing.get(domain)?.id ?? seen.get(domain);
@@ -115,6 +144,10 @@ export async function runDiscovery(deps: DiscoveryDeps, queries: DiscoveryQuery[
         continue;
       }
       if (s.newCompanies >= opts.targetCompanies) continue;
+      if (seg.newCompanies >= segmentCap) {
+        seg.capped = true;
+        continue;
+      }
 
       const exclusion = excludeCandidate(`${hit.title ?? ""} ${hit.entity?.description ?? ""} ${hit.excerpt ?? ""}`, hit.entity);
       const company = await deps.store.createProspect({
@@ -130,12 +163,15 @@ export async function runDiscovery(deps: DiscoveryDeps, queries: DiscoveryQuery[
       });
       seen.set(domain, company.id);
       if (exclusion) s.excludedCompanies++;
-      else s.newCompanies++;
+      else {
+        s.newCompanies++;
+        seg.newCompanies++;
+      }
       sources.push(source(company.id, exclusion ? "excluded" : "new"));
       if (hit.entity) await deps.store.addFacts(company.id, entityFacts(hit.entity, deps.provider.name, hit.url, res.callId, checkedAt));
     }
     if (sources.length) await deps.store.addSources(sources);
-    deps.logger.log("info", "discovery_query_done", { queryId: q.id, method: deps.provider.method(req), results: res.value.hits.length, newCompanies: s.newCompanies });
+    deps.logger.log("info", "discovery_query_done", { queryId: q.id, segment: q.segment, method: deps.provider.method(req), results: res.value.hits.length, newCompanies: s.newCompanies });
   }
   if (s.newCompanies >= opts.targetCompanies) s.stoppedBy = "target_reached";
   return s;

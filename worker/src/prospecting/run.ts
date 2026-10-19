@@ -7,7 +7,7 @@ import { ESTIMATE_SAFETY_FACTOR, OpenAIClient } from "../analysis/openai.ts";
 import { createLogger } from "../logger.ts";
 import { normalizeDomain } from "../url.ts";
 import { loadProspectingConfig, loadQueries, type ProspectingConfig } from "./config.ts";
-import { runDiscovery } from "./discover.ts";
+import { interleaveBySegment, runDiscovery } from "./discover.ts";
 import { ExaProvider, parseExaResponse } from "./exa.ts";
 import { SupabaseProspectStore } from "./prospectStore.ts";
 import type { SearchRequest } from "./provider.ts";
@@ -124,17 +124,19 @@ async function main(): Promise<number> {
   }
 
   if (command === "discover") {
-    const reqs = queries.discovery.map((q) => ({ label: q.id, request: { operation: q.operation, query: q.query, numResults: config.resultsPerQuery } as SearchRequest }));
+    const reqs = interleaveBySegment(queries.discovery).map((q) => ({ label: `${q.segment}/${q.id}`, request: { operation: q.operation, query: q.query, numResults: config.resultsPerQuery } as SearchRequest }));
     const { lines, worst } = describeRequests(provider, reqs);
-    console.log(`Discovery plan: up to ${config.targetCompanies} new companies, ${lines.length} queries (worst case $${worst.toFixed(4)} if all run), budget $${budgetUsd.toFixed(2)}:\n${lines.join("\n")}`);
+    const cap = Math.max(1, Math.ceil(config.targetCompanies * config.maxSegmentShare));
+    const usd = (n: number, dp: number) => "\u0024" + n.toFixed(dp);
+    console.log(`Discovery plan: up to ${config.targetCompanies} new companies, at most ${cap} from any one segment, ${lines.length} queries (worst case ${usd(worst, 4)} if all run), budget ${usd(budgetUsd, 2)}:\n${lines.join("\n")}`);
     if (!values.live) {
       logger.log("info", "dry_run_complete", { note: "Nothing was called. Add --live to run discovery." });
       return 0;
     }
-    const runId = await store.startRun({ pilot: config.pilot, mode: "discover", provider: provider.name, budgetUsd, config: { targetCompanies: config.targetCompanies, resultsPerQuery: config.resultsPerQuery, queries: queries.discovery }, workerVersion });
+    const runId = await store.startRun({ pilot: config.pilot, mode: "discover", provider: provider.name, budgetUsd, config: { targetCompanies: config.targetCompanies, maxSegmentShare: config.maxSegmentShare, resultsPerQuery: config.resultsPerQuery, queries: queries.discovery }, workerVersion });
     const guard = new SpendGuard(new BudgetTracker(budgetUsd), (r) => store.recordCall(runId, r));
     try {
-      const summary = await runDiscovery({ provider, guard, store, logger, runId, pilot: config.pilot }, queries.discovery, { numResults: config.resultsPerQuery, targetCompanies: config.targetCompanies });
+      const summary = await runDiscovery({ provider, guard, store, logger, runId, pilot: config.pilot }, queries.discovery, { numResults: config.resultsPerQuery, targetCompanies: config.targetCompanies, maxSegmentShare: config.maxSegmentShare });
       const scored = await rescore(store, null, runId);
       await store.finishRun(runId, { status: summary.stoppedBy === "budget" ? "stopped_budget" : "completed", spentUsd: guard.budget.spentUsd, summary: { ...summary, scored } });
       logger.log("info", "discovery_finished", { ...summary, skipped: summary.skipped.length, spentUsd: guard.budget.spentUsd.toFixed(4) });

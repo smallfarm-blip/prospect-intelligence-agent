@@ -1,24 +1,26 @@
 {
   "calibration": [
-    "independent US direct-to-consumer apparel brand selling online through its own Shopify store, founder-led, small team",
-    "US direct-to-consumer clean beauty or skincare brand with its own online store, founder-led, under 100 employees"
+    "founder-led US direct-to-consumer apparel or accessories brand that launched in the last few years and sells through its own online store",
+    "established US direct-to-consumer apparel brand with a broad product range sold through its own ecommerce store and growing online sales"
   ],
   "sampleCompany": { "name": "Taylor Stitch", "domain": "taylorstitch.com" },
   "discovery": [
-    { "id": "apparel-company", "operation": "company_search", "query": "independent US direct-to-consumer apparel brand selling online through its own Shopify store, founder-led, small team" },
-    { "id": "beauty-company", "operation": "company_search", "query": "US direct-to-consumer clean beauty or skincare brand with its own online store, founder-led, under 100 employees" },
-    { "id": "home-company", "operation": "company_search", "query": "US direct-to-consumer home goods brand (bedding, kitchenware, decor) selling through its own ecommerce site, independent, under 100 employees" },
-    { "id": "wellness-company", "operation": "company_search", "query": "US direct-to-consumer wellness or supplements brand with its own online store, founder-led, growing small team" },
-    { "id": "specialty-company", "operation": "company_search", "query": "US direct-to-consumer specialty consumer goods brand (outdoor gear, pet products, stationery, coffee) selling online, independent" },
-    { "id": "apparel-web", "operation": "web_search", "query": "founder-led American DTC clothing brand online store shop new arrivals" },
-    { "id": "beauty-web", "operation": "web_search", "query": "independent American skincare brand founded by its founder, shop online, free shipping over" },
-    { "id": "home-web", "operation": "web_search", "query": "small American home goods brand made thoughtfully, shop our bestsellers online" },
-    { "id": "wellness-web", "operation": "web_search", "query": "founder-led US wellness brand shop online subscribe and save" },
-    { "id": "growth-company", "operation": "company_search", "query": "US DTC consumer brand that recently raised a seed or Series A round to grow its ecommerce business" },
-    { "id": "promo-web", "operation": "web_search", "query": "independent US DTC brand sitewide sale bundle and save shop online founder story" },
-    { "id": "lean-company", "operation": "company_search", "query": "bootstrapped profitable US direct-to-consumer brand with 10 to 50 employees selling online" },
-    { "id": "retail-expansion-company", "operation": "company_search", "query": "US direct-to-consumer brand that started online and recently expanded into wholesale or national retail while still growing its own ecommerce store" },
-    { "id": "new-category-company", "operation": "company_search", "query": "independent US consumer brand that recently launched a new product category or second product line sold through its own online store" },
-    { "id": "ecommerce-hire-company", "operation": "company_search", "query": "founder-led US consumer products brand building out its ecommerce team, recently hired or hiring an ecommerce or digital marketing manager" }
+    { "id": "emerging-apparel-company", "segment": "emerging", "operation": "company_search", "query": "founder-led US direct-to-consumer apparel or accessories brand that launched in the last few years and sells through its own online store" },
+    { "id": "emerging-beauty-company", "segment": "emerging", "operation": "company_search", "query": "early-stage US clean beauty or skincare brand run by its founder, selling direct to consumers through its own website" },
+    { "id": "emerging-wellness-company", "segment": "emerging", "operation": "company_search", "query": "young US wellness, supplement or functional food brand selling direct to consumers online, run by its founders" },
+    { "id": "emerging-specialty-web", "segment": "emerging", "operation": "web_search", "query": "founder-run American brand shop online small batch home goods, pet products or stationery, our story" },
+    { "id": "emerging-launch-web", "segment": "emerging", "operation": "web_search", "query": "independent American DTC brand founder story new collection just launched shop online" },
+
+    { "id": "growing-apparel-company", "segment": "growing", "operation": "company_search", "query": "established US direct-to-consumer apparel brand with a broad product range sold through its own ecommerce store and growing online sales" },
+    { "id": "growing-home-company", "segment": "growing", "operation": "company_search", "query": "growing US direct-to-consumer home goods brand (bedding, kitchenware, decor) with its own ecommerce site and an expanding product assortment" },
+    { "id": "growing-category-company", "segment": "growing", "operation": "company_search", "query": "independent US consumer brand that recently launched a new product category or second product line sold through its own online store" },
+    { "id": "growing-funded-company", "segment": "growing", "operation": "company_search", "query": "US direct-to-consumer consumer brand that recently raised funding to grow its ecommerce business" },
+    { "id": "growing-hire-company", "segment": "growing", "operation": "company_search", "query": "US consumer products brand building out its ecommerce team, recently hired or hiring an ecommerce or digital marketing manager" },
+
+    { "id": "established-retail-company", "segment": "established", "operation": "company_search", "query": "US direct-to-consumer brand that started online and expanded into wholesale or national retail while still growing its own ecommerce store" },
+    { "id": "established-beauty-company", "segment": "established", "operation": "company_search", "query": "well-known US direct-to-consumer beauty or personal care brand with a large online customer base and its own ecommerce store" },
+    { "id": "established-apparel-company", "segment": "established", "operation": "company_search", "query": "nationally recognised US direct-to-consumer apparel or footwear brand that still sells mainly through its own website" },
+    { "id": "established-wellness-company", "segment": "established", "operation": "company_search", "query": "established US wellness or supplements brand with a subscription program on its own ecommerce site" },
+    { "id": "established-loyalty-web", "segment": "established", "operation": "web_search", "query": "American DTC brand online store shop all collections subscribe and save rewards program free returns" }
   ]
 }

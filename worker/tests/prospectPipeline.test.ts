@@ -129,10 +129,10 @@ test("discovery deduplicates by domain, records sightings, skips non-candidates 
   const summary = await runDiscovery(
     { provider, guard, store, logger: silentLogger, runId: "run-1", pilot: "p" },
     [
-      { id: "a", operation: "company_search", query: "q1" },
-      { id: "b", operation: "web_search", query: "q2" },
+      { id: "a", segment: "emerging", operation: "company_search", query: "q1" },
+      { id: "b", segment: "emerging", operation: "web_search", query: "q2" },
     ],
-    { numResults: 10, targetCompanies: 25 },
+    { numResults: 10, targetCompanies: 25, maxSegmentShare: 1 },
   );
   assert.equal(summary.newCompanies, 2);
   assert.equal(summary.excludedCompanies, 2);
@@ -150,12 +150,12 @@ test("discovery deduplicates by domain, records sightings, skips non-candidates 
 test("discovery stops at the target and when the budget refuses the next query", async () => {
   const store = new MemoryProspectStore();
   const provider = new MockDiscoveryProvider((_r, i) => response([hit(`https://brand${i}a.example/`), hit(`https://brand${i}b.example/`)]), 0.01);
-  const capped = await runDiscovery({ provider, guard: new SpendGuard(new BudgetTracker(1), (r) => store.recordCall("r", r)), store, logger: silentLogger, runId: "r", pilot: "p" }, [1, 2, 3].map((i) => ({ id: `q${i}`, operation: "company_search" as const, query: `q${i}` })), { numResults: 10, targetCompanies: 3 });
+  const capped = await runDiscovery({ provider, guard: new SpendGuard(new BudgetTracker(1), (r) => store.recordCall("r", r)), store, logger: silentLogger, runId: "r", pilot: "p" }, [1, 2, 3].map((i) => ({ id: `q${i}`, segment: "growing" as const, operation: "company_search" as const, query: `q${i}` })), { numResults: 10, targetCompanies: 3, maxSegmentShare: 1 });
   assert.equal(capped.newCompanies, 3);
   assert.equal(capped.stoppedBy, "target_reached");
 
   const store2 = new MemoryProspectStore();
-  const broke = await runDiscovery({ provider: new MockDiscoveryProvider(() => response([hit("https://x.example/")]), 0.01), guard: new SpendGuard(new BudgetTracker(0.015), (r) => store2.recordCall("r", r)), store: store2, logger: silentLogger, runId: "r", pilot: "p" }, [1, 2, 3].map((i) => ({ id: `q${i}`, operation: "company_search" as const, query: `q${i}` })), { numResults: 10, targetCompanies: 25 });
+  const broke = await runDiscovery({ provider: new MockDiscoveryProvider(() => response([hit("https://x.example/")]), 0.01), guard: new SpendGuard(new BudgetTracker(0.015), (r) => store2.recordCall("r", r)), store: store2, logger: silentLogger, runId: "r", pilot: "p" }, [1, 2, 3].map((i) => ({ id: `q${i}`, segment: "growing" as const, operation: "company_search" as const, query: `q${i}` })), { numResults: 10, targetCompanies: 25, maxSegmentShare: 1 });
   assert.equal(broke.stoppedBy, "budget");
   assert.equal(broke.queriesRun, 1);
   assert.equal(store2.calls.at(-1)!.status, "refused_budget");

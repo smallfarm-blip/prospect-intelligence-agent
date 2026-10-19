@@ -4,7 +4,7 @@ import { z } from "zod";
 import { loadModelSettings, type ModelSettings } from "../analysis/config.ts";
 import { num, required } from "../config.ts";
 import { normalizeDomain } from "../url.ts";
-import type { DiscoveryQuery } from "./discover.ts";
+import { DISCOVERY_SEGMENTS, type DiscoveryQuery } from "./discover.ts";
 import type { ExaPricing } from "./exa.ts";
 
 export interface ProspectingConfig {
@@ -20,6 +20,7 @@ export interface ProspectingConfig {
   budgetUsd: number;
   trialBudgetUsd: number;
   targetCompanies: number;
+  maxSegmentShare: number;
   resultsPerQuery: number;
   screenLimit: number;
   evidenceMonths: number;
@@ -32,7 +33,7 @@ const QueriesFileSchema = z.object({
   calibration: z.array(z.string().min(5).max(300)).min(1).max(3),
   sampleCompany: z.object({ name: z.string().min(1), domain: z.string().min(3) }),
   discovery: z
-    .array(z.object({ id: z.string().min(1).max(40), operation: z.enum(["company_search", "web_search"]), query: z.string().min(5).max(300) }))
+    .array(z.object({ id: z.string().min(1).max(40), segment: z.enum(DISCOVERY_SEGMENTS), operation: z.enum(["company_search", "web_search"]), query: z.string().min(5).max(300) }))
     .min(1)
     .max(40),
 });
@@ -86,6 +87,7 @@ export function loadProspectingConfig(env: NodeJS.ProcessEnv, opts: { live: bool
     budgetUsd: num(env, "DISCOVERY_BUDGET_USD", 5, problems),
     trialBudgetUsd: num(env, "TRIAL_BUDGET_USD", 0.15, problems),
     targetCompanies: num(env, "DISCOVERY_TARGET_COMPANIES", 25, problems),
+    maxSegmentShare: num(env, "DISCOVERY_MAX_SEGMENT_SHARE", 0.4, problems),
     resultsPerQuery: num(env, "DISCOVERY_RESULTS_PER_QUERY", 10, problems),
     screenLimit: num(env, "SCREENING_MAX_COMPANIES", 25, problems),
     evidenceMonths: num(env, "SCREENING_EVIDENCE_MONTHS", 18, problems),
@@ -96,6 +98,7 @@ export function loadProspectingConfig(env: NodeJS.ProcessEnv, opts: { live: bool
   if (config.budgetUsd <= 0 || config.budgetUsd > 5) problems.push("DISCOVERY_BUDGET_USD must be greater than 0 and at most 5 (the approved cap)");
   if (config.trialBudgetUsd <= 0 || config.trialBudgetUsd > 0.5) problems.push("TRIAL_BUDGET_USD must be greater than 0 and at most 0.50");
   if (config.targetCompanies < 1 || config.targetCompanies > 25) problems.push("DISCOVERY_TARGET_COMPANIES must be between 1 and 25");
+  if (config.maxSegmentShare < 0.34 || config.maxSegmentShare > 1) problems.push("DISCOVERY_MAX_SEGMENT_SHARE must be between 0.34 and 1");
   if (config.resultsPerQuery < 1 || config.resultsPerQuery > 25) problems.push("DISCOVERY_RESULTS_PER_QUERY must be between 1 and 25");
 
   if (missing.length) problems.unshift(`Missing required settings: ${missing.join(", ")}`);

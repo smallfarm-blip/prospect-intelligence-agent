@@ -124,10 +124,18 @@ test("Exa cost estimates follow published Auto pricing and the worst case covers
   assert.ok(p.estimatedCostUsd(req, 3) <= p.worstCaseUsd(req));
 });
 
-test("Discovery queries cover category, business-model and trigger strategies, not only broad DTC searches", () => {
+test("Discovery queries cover all three segments with trigger strategies and no hard size filters", () => {
   const queries = loadQueries("config/discovery-queries.json").discovery;
   const ids = queries.map((q) => q.id);
   assert.equal(new Set(ids).size, ids.length);
-  for (const id of ["growth-company", "lean-company", "retail-expansion-company", "new-category-company", "ecommerce-hire-company"]) assert.ok(ids.includes(id), id);
-  for (const q of queries) assert.ok(!/ OR |"/.test(q.query), `natural-language query expected: ${q.id}`);
+  for (const seg of ["emerging", "growing", "established"]) {
+    const own = queries.filter((q) => q.segment === seg);
+    assert.ok(own.length >= 4, `${seg} needs enough queries to fill its share`);
+    assert.ok(own.some((q) => q.operation === "company_search"), `${seg} uses structured company search`);
+  }
+  for (const id of ["growing-funded-company", "growing-category-company", "growing-hire-company", "established-retail-company"]) assert.ok(ids.includes(id), id);
+  for (const q of queries) {
+    assert.ok(!/ OR |"/.test(q.query), `natural-language query expected: ${q.id}`);
+    assert.ok(!/\b(under|over|fewer than|more than|less than)\s+\$?\d|\d+\s*(to|-)\s*\d+\s*employees|\bsmall team\b/i.test(q.query), `no hard size filter: ${q.id}`);
+  }
 });

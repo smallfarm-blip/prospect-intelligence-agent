@@ -146,6 +146,7 @@ export class SupabaseProspectStore implements ProspectStore {
           excerpt: clip(s.excerpt, 600),
           rank: s.rank,
           outcome: s.outcome,
+          discovery_segment: s.discoverySegment ?? null,
           provider_record: s.providerRecord,
         })),
       ),
@@ -294,6 +295,7 @@ export class SupabaseProspectStore implements ProspectStore {
         commercial_relevance: s.commercialRelevance,
         organizational_fit: s.organizationalFit,
         recommended_action: s.recommendedAction,
+        qualification: { assessments: s.assessments, tradeOffs: s.tradeOffs },
       }),
       "Save prospect score",
     );

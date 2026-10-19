@@ -44,8 +44,8 @@ test("unknown revenue keeps the company visible as needs qualification with full
 test("provider revenue estimates give probable fit, never verified fit", () => {
   const s = scoreProspect(base({ facts: probableFacts() }));
   assert.equal(s.fitStatus, "probable_fit");
-  assert.match(s.recommendedAction, /Verify size/);
-  const revenue = s.components.find((c) => c.key === "fit")!.items.find((i) => i.key === "revenue_annual_usd")!;
+  assert.match(s.recommendedAction, /Verify commercial capacity/);
+  const revenue = s.components.find((c) => c.key === "commercial")!.items.find((i) => i.key === "revenue_annual_usd")!;
   assert.ok(revenue.evidence < revenue.max, "an estimate earns less than full credit");
 });
 
@@ -81,7 +81,7 @@ test("exclusions and verified mismatches are not a fit; estimate mismatches only
   assert.equal(scoreProspect(base({ facts: verifiedFacts(), excludedReason: "Describes itself as an agency" })).fitStatus, "not_fit");
   const big = [...verifiedFacts().filter((f) => f.attribute !== "revenue_annual_usd"), fact("revenue_annual_usd", "$400M", "verified", { n: 400e6, source: "reviewer" })];
   assert.equal(scoreProspect(base({ facts: big })).fitStatus, "not_fit");
-  const est = [...probableFacts().filter((f) => f.attribute !== "revenue_annual_usd"), fact("revenue_annual_usd", "$90M", "provider_estimate", { n: 90e6 })];
+  const est = [...probableFacts().filter((f) => f.attribute !== "revenue_annual_usd"), fact("revenue_annual_usd", "$400M", "provider_estimate", { n: 400e6 })];
   assert.equal(scoreProspect(base({ facts: est })).fitStatus, "needs_qualification");
 });
 
@@ -126,7 +126,7 @@ test("the score stays within 0-100 and the score range is ordered", () => {
 });
 
 test("classifyFit treats a missing direct store as unknown, not a mismatch", () => {
-  const r = Object.fromEntries((["category", "sells_dtc", "business_model", "hq_country", "revenue_annual_usd", "employee_count", "leadership_model", "experimentation_tools", "promotion_tools", "catalog_size"] as const).map((a) => [a, resolveAttribute([], a)])) as Parameters<typeof classifyFit>[0];
+  const r = Object.fromEntries((["category", "sells_dtc", "business_model", "hq_country", "revenue_annual_usd", "employee_count", "funding_total_usd", "leadership_model", "experimentation_tools", "promotion_tools", "catalog_size"] as const).map((a) => [a, resolveAttribute([], a)])) as Parameters<typeof classifyFit>[0];
   assert.equal(classifyFit(r, null), "needs_qualification");
 });
 

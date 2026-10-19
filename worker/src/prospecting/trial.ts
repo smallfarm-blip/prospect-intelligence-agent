@@ -1,6 +1,7 @@
 import { normalizeDomain } from "../url.ts";
 import { companyNameFrom, excludeCandidate, skipNonCandidate } from "./exclusion.ts";
 import type { DiscoveryProvider, SearchHit, SearchRequest, SearchResponse } from "./provider.ts";
+import { LARGE_ORG_MIN, SMALL_TEAM_MAX } from "./qualification.ts";
 import { evaluateEstimate, money } from "./scoring.ts";
 import { matchPerson, mentionsCompany } from "./screening.ts";
 import type { SpendGuard } from "./spend.ts";
@@ -129,17 +130,15 @@ export function assessHit(hit: SearchHit, domain: string, rank: number): TrialCo
   const company = { rank, name: companyNameFrom(e?.name ?? null, hit.title, domain), domain, employees, revenueEstimateUsd: revenue, country, irrelevant, unknowns };
   if (irrelevant) return { ...company, assessment: "Not a candidate" };
 
-  const checks = [
-    revenue !== null ? evaluateEstimate("revenue_annual_usd", String(revenue), revenue) : null,
-    employees !== null ? evaluateEstimate("employee_count", String(employees), employees) : null,
-    country ? evaluateEstimate("hq_country", country, null) : null,
-  ].filter((c): c is NonNullable<typeof c> => !!c);
-  const mismatch = checks.find((c) => c.match === "mismatch");
-  if (mismatch) return { ...company, assessment: `Unlikely fit: ${mismatch.label}` };
-  const caveats = checks.filter((c) => c.match === "partial").map((c) => c.label);
-  const sizeMatch = checks.slice(0, 2).some((c) => c.match === "match");
-  const head = sizeMatch ? "Possible fit on size" : "Needs qualification";
-  return { ...company, assessment: caveats.length ? `${head}; ${caveats.join("; ")}` : head };
+  const rev = revenue !== null ? evaluateEstimate("revenue_annual_usd", String(revenue), revenue) : null;
+  const where = country ? evaluateEstimate("hq_country", country, null) : null;
+  if (rev?.match === "mismatch") return { ...company, assessment: `Unlikely fit: ${rev.label}` };
+  const notes = [
+    rev ? (rev.match === "match" ? "capacity plausible (revenue est.)" : `capacity uncertain: ${rev.label}`) : "capacity unknown",
+    employees !== null && employees <= SMALL_TEAM_MAX ? "small team, founder likely reachable" : employees !== null && employees >= LARGE_ORG_MIN ? "larger org, access may be layered" : null,
+    where?.match === "partial" ? where.label : null,
+  ].filter((n): n is string => !!n);
+  return { ...company, assessment: `Needs qualification; ${notes.join("; ")}` };
 }
 
 function summarize(

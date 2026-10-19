@@ -1,3 +1,4 @@
+import type { DiscoverySegment } from "./discover.ts";
 import type { ProspectScore, ProspectScoreInput } from "./scoring.ts";
 import type { ProviderCallRecord } from "./spend.ts";
 import type { DecisionMaker, Fact, Signal } from "./types.ts";
@@ -26,6 +27,7 @@ export interface NewSource {
   excerpt: string | null;
   rank: number | null;
   outcome: "new" | "duplicate" | "excluded" | null;
+  discoverySegment?: DiscoverySegment;
   providerRecord: Record<string, unknown> | null;
 }
 

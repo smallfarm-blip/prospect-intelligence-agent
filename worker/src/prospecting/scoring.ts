@@ -1,8 +1,9 @@
+import { selectNextAction, type NextAction } from "./nextAction.ts";
 import { assessQualification, TARGET_ROLES, type Assessment } from "./qualification.ts";
 import { byKind, classifySignal, isBusinessSignal, isServiceLinked, isStrongSignal, type EvidenceKind } from "./signalEvidence.ts";
 import { TARGET_CATEGORIES, type Confidence, type DecisionMaker, type Fact, type FactAttribute, type FactSourceType, type FactStatus, type FitStatus, type Signal } from "./types.ts";
 
-export const SCORING_VERSION = "prospect-score-v4";
+export const SCORING_VERSION = "prospect-score-v5";
 
 export const SCORED_ATTRIBUTES = ["category", "sells_dtc", "business_model", "hq_country", "revenue_annual_usd", "employee_count", "funding_total_usd", "leadership_model", "experimentation_tools", "promotion_tools", "catalog_size"] as const;
 
@@ -78,6 +79,7 @@ export interface ProspectScore {
   tradeOffs: string[];
   /** Why the fit status was (or was not) raised to verified/probable. */
   fitBasis: string[];
+  nextAction: NextAction;
 }
 
 const ICP_ATTRIBUTES: FactAttribute[] = ["category", "sells_dtc", "business_model", "hq_country", "revenue_annual_usd", "employee_count"];
@@ -323,7 +325,7 @@ export function scoreProspect(input: ProspectScoreInput): ProspectScore {
     const e = evaluate(r[a]);
     return { status: r[a].status, match: e.match, label: e.label, value: r[a].valueNumber };
   };
-  const qualification = assessQualification({
+  const qualificationInput = {
     revenue: read("revenue_annual_usd"),
     catalog: read("catalog_size"),
     funding: read("funding_total_usd"),
@@ -335,7 +337,9 @@ export function scoreProspect(input: ProspectScoreInput): ProspectScore {
     businessSignals,
     decisionMakers: input.decisionMakers,
     screened: input.screened,
-  });
+  };
+  const qualification = assessQualification(qualificationInput);
+  const nextAction = selectNextAction({ ...qualificationInput, assessments: qualification.assessments, fitStatus, excludedReason: input.excludedReason });
 
   return {
     scoringVersion: SCORING_VERSION,
@@ -350,10 +354,11 @@ export function scoreProspect(input: ProspectScoreInput): ProspectScore {
     reasonsToInvestigate,
     commercialRelevance: commercialText(r, businessSignals),
     organizationalFit: organisationalText(r),
-    recommendedAction: recommendAction(fitStatus, unresolved, input),
+    recommendedAction: `${nextAction.label}: ${nextAction.step}`,
     assessments: qualification.assessments,
     tradeOffs: qualification.tradeOffs,
-    fitBasis: fitBasis(fitStatus, fitSupports(r, businessSignals), input.excludedReason),
+    fitBasis: fitBasis(fitStatus, fitSupports(r, businessSignals), input.excludedReason, r.revenue_annual_usd.status === "unknown" ? null : `revenue ${evaluate(r.revenue_annual_usd).label}`),
+    nextAction,
   };
 }
 
@@ -396,6 +401,9 @@ export function fitSupports(r: Record<FactAttribute, ResolvedAttribute>, busines
   return out;
 }
 
+/** A catalogue or a launch shows commercial activity; only revenue or funding speaks to paying for a $4,500 sprint. */
+const showsCapacity = (supports: FitSupport[]) => supports.some((s) => s.kind === "revenue" || s.kind === "funding");
+
 /** Independent = at least two different kinds of evidence that do not all come from the same source. */
 function independentSupport(supports: FitSupport[]): boolean {
   return new Set(supports.map((s) => s.kind)).size >= 2 && new Set(supports.map((s) => s.origin)).size >= 2;
@@ -403,8 +411,8 @@ function independentSupport(supports: FitSupport[]): boolean {
 
 /**
  * Fit is about the kind of business, plus evidence it can pay. Verified fit needs verified revenue in a viable
- * band. Probable fit needs multiple independent supports, or one strong directly relevant signal; one generic
- * trigger, catalogue, funding mention or provider estimate alone leaves the company in Needs qualification.
+ * band. Probable fit needs capacity evidence (revenue or funding) plus independent corroboration or a strong
+ * directly relevant signal. A catalogue and launches without capacity evidence stay in Needs qualification.
  */
 export function classifyFit(r: Record<FactAttribute, ResolvedAttribute>, excludedReason: string | null, businessSignals: Signal[] = []): FitStatus {
   if (excludedReason) return "not_fit";
@@ -418,7 +426,7 @@ export function classifyFit(r: Record<FactAttribute, ResolvedAttribute>, exclude
   const coreContradicted = (["category", "sells_dtc", "hq_country", "revenue_annual_usd", "employee_count"] as FactAttribute[]).some((a) => r[a].status === "contradicted");
   const capacityVerified = r.revenue_annual_usd.status === "verified" && viableRevenue(r.revenue_annual_usd);
   const supports = fitSupports(r, businessSignals);
-  const capacityLikely = independentSupport(supports) || supports.some((s) => s.strong);
+  const capacityLikely = showsCapacity(supports) && (independentSupport(supports) || supports.some((s) => s.strong));
   const estimateMismatch = (["employee_count", "business_model", "category"] as FactAttribute[]).some(
     (a) => r[a].status !== "verified" && r[a].status !== "unknown" && evaluate(r[a]).match === "mismatch",
   );
@@ -428,7 +436,7 @@ export function classifyFit(r: Record<FactAttribute, ResolvedAttribute>, exclude
   return "needs_qualification";
 }
 
-function fitBasis(fit: FitStatus, supports: FitSupport[], excludedReason: string | null): string[] {
+function fitBasis(fit: FitStatus, supports: FitSupport[], excludedReason: string | null, revenueNote: string | null): string[] {
   if (fit === "not_fit") return [excludedReason ? `Set aside: ${excludedReason}` : "Set aside: verified evidence places it outside the ICP"];
   const listed = supports.map((s) => `${s.label} [${s.origin.replace(/_/g, " ")}]`);
   if (fit === "verified_fit") return ["Category, direct selling, country and revenue are independently verified", ...listed];
@@ -439,6 +447,12 @@ function fitBasis(fit: FitStatus, supports: FitSupport[], excludedReason: string
       : [`${supports.length} independent supporting signals`, ...listed];
   }
   if (!supports.length) return ["No commercial evidence yet; revenue, catalogue, funding and business triggers are unknown"];
+  if (!showsCapacity(supports)) {
+    const lead = revenueNote
+      ? `Shows commercial activity, but ${revenueNote} is not in a range that shows it fits a $4,500 sprint`
+      : "Shows commercial activity, but no revenue or funding evidence yet that it can fund a $4,500 sprint";
+    return [lead, ...listed];
+  }
   if (independentSupport(supports) || strong.length) return ["Commercial evidence is promising, but core traits (category, direct selling, country) are not yet established", ...listed];
   return [`Only one line of support so far; needs independent corroboration before Probable fit`, ...listed];
 }
@@ -479,17 +493,6 @@ function commercialText(r: Record<FactAttribute, ResolvedAttribute>, business: S
 function organisationalText(r: Record<FactAttribute, ResolvedAttribute>): string {
   const describe = (a: FactAttribute) => (r[a].status === "unknown" ? `${LABELS[a]} unknown` : `${LABELS[a]}: ${evaluate(r[a]).label} (${STATUS_LABEL[r[a].status]})`);
   return [describe("category"), describe("business_model"), describe("hq_country"), describe("employee_count")].join("; ") + ".";
-}
-
-function recommendAction(fit: FitStatus, unresolved: string[], input: ProspectScoreInput): string {
-  if (fit === "not_fit") return input.excludedReason ? `Set aside: ${input.excludedReason}. Reopen only with new evidence.` : "Set aside: verified evidence places it outside the ICP. Reopen only with new evidence.";
-  const capacityGap = unresolved.some((u) => u.startsWith("Annual revenue"));
-  const dmConfirmed = input.decisionMakers.some((d) => d.review === "confirmed");
-  if (fit === "verified_fit") return dmConfirmed ? "Request deeper site research." : "Confirm a decision-maker from a public source, then request deeper site research.";
-  if (fit === "probable_fit") return capacityGap ? "Verify commercial capacity (annual revenue) with an independent source." : "Verify the remaining ICP traits, then consider deeper research.";
-  if (!input.screened) return "Run screening to look for business triggers and site signals.";
-  const top = unresolved.slice(0, 2).map((u) => u.split(":")[0].toLowerCase());
-  return `Find independent evidence for ${top.join(" and ")}.`;
 }
 
 export interface RankedProspect {

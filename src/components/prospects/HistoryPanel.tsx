@@ -3,7 +3,7 @@ import type { ProspectBoard } from '@/lib/prospectTypes';
 import type { ProspectView } from '@/lib/prospectView';
 import { formatDate, humanize, usd } from '@/lib/format';
 import { Badge } from '@/components/ui';
-import { ACTION_META, FIT_LABELS } from '@/components/prospects/labels';
+import { ACTION_META, FIT_LABELS, NEXT_ACTION_META, OVERRIDE_FIELD_LABELS } from '@/components/prospects/labels';
 
 interface Entry {
   at: string;
@@ -23,14 +23,19 @@ export function HistoryPanel({ view, board }: { view: ProspectView; board: Prosp
       body: d.reason,
     })),
     ...board.overrides.filter((o) => o.company_id === view.id).map((o) => {
-      const fmt = (v: string | null) => (o.field === 'fit_status' && v ? FIT_LABELS[v as keyof typeof FIT_LABELS] ?? v : v ?? '-');
-      return { at: o.created_at, key: o.id, icon: UserPen, title: `${o.field === 'score' ? 'Score' : 'Fit status'} changed: ${fmt(o.previous_value)} to ${fmt(o.new_value)}`, body: o.reason };
+      const fmt = (v: string | null) => {
+        if (!v) return '-';
+        if (o.field === 'fit_status') return FIT_LABELS[v as keyof typeof FIT_LABELS] ?? v;
+        if (o.field === 'next_action') return NEXT_ACTION_META[v as keyof typeof NEXT_ACTION_META]?.label ?? v;
+        return v;
+      };
+      return { at: o.created_at, key: o.id, icon: UserPen, title: `${OVERRIDE_FIELD_LABELS[o.field]} changed: ${fmt(o.previous_value)} to ${fmt(o.new_value)}`, body: o.reason };
     }),
     ...board.scores.filter((s) => s.company_id === view.id).map((s) => ({
       at: s.computed_at,
       key: s.id,
       icon: Gauge,
-      title: `Scored ${s.evidence_score} (range ${s.potential_min}-${s.potential_max}), ${FIT_LABELS[s.fit_status]}`,
+      title: `Scored ${s.evidence_score} (range ${s.potential_min}-${s.potential_max}), ${FIT_LABELS[s.fit_status]}${s.qualification?.nextAction ? ` · next: ${NEXT_ACTION_META[s.qualification.nextAction.key].label}` : ''}`,
       body: s.scoring_version,
     })),
     { at: view.prospect.created_at, key: 'added', icon: History, title: 'Added to prospects', body: undefined },

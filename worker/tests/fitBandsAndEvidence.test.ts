@@ -82,8 +82,11 @@ test("multiple independent supports, or one strong explained signal, give probab
   assert.equal(mixed.fitStatus, "probable_fit");
 
   const strong = scoreProspect(base({ facts: core(), signals: [trigger()] }));
-  assert.equal(strong.fitStatus, "probable_fit");
-  assert.match(strong.fitBasis[0], /^One strong, directly relevant signal: Launching a new bedding category/);
+  assert.equal(strong.fitStatus, "needs_qualification", "a strong launch shows activity, not capacity");
+  assert.match(strong.fitBasis[0], /no revenue or funding evidence yet/);
+
+  const strongFunded = scoreProspect(base({ facts: [...core(), funding], signals: [trigger()] }));
+  assert.equal(strongFunded.fitStatus, "probable_fit");
 });
 
 test("revenue outside $1M-$75M is not support, but never removes the company", () => {

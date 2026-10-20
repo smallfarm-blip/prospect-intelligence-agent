@@ -61,7 +61,7 @@ export function ReviewActions({ view, estimate, openedAt, onChanged }: Props) {
   );
 }
 
-function ReasonField({ value, onChange, prompt }: { value: string; onChange: (v: string) => void; prompt: string }) {
+export function ReasonField({ value, onChange, prompt }: { value: string; onChange: (v: string) => void; prompt: string }) {
   return (
     <label className="block">
       <span className="label">Reason</span>

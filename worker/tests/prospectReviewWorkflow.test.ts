@@ -149,8 +149,27 @@ test("top recommendations take the highest open scores and carry the reason and 
   const top = topRecommendations(views);
   assert.deepEqual(top.map((r) => r.view.id), ["g", "f", "e", "d", "c"]);
   assert.deepEqual(top[0].reasons, ["Basis for g", "Reason for g"]);
-  assert.equal(top[0].nextAction, "Check g revenue");
   assert.equal(topRecommendations(buildViews(board({ prospects: [prospect("a")] }))).length, 0, "nothing unscored is recommended");
+});
+
+test("top 5 ranks by investigation value, not evidence score, and leaves out deferred companies", () => {
+  const action = (key: "validate_business_need" | "verify_commercial_capacity" | "defer", priority: number) => ({
+    key, label: key, explanation: `Why ${key}`, step: "step", evidence: [`Evidence for ${key}`], keyUnknown: "unknown", priority,
+  });
+  const q = (key: Parameters<typeof action>[0], priority: number) => ({ qualification: { assessments: [], tradeOffs: [], fitBasis: [], nextAction: action(key, priority) } });
+  const views = buildViews(
+    board({
+      prospects: ["marine", "buckle", "big"].map((id) => prospect(id)),
+      scores: [
+        score("marine", 47, "probable_fit", q("validate_business_need", 55)),
+        score("buckle", 60, "needs_qualification", q("verify_commercial_capacity", 33)),
+        score("big", 90, "probable_fit", q("defer", 0)),
+      ],
+    }),
+  );
+  const top = topRecommendations(views);
+  assert.deepEqual(top.map((r) => r.view.id), ["marine", "buckle"]);
+  assert.deepEqual(top[0].reasons, ["Evidence for validate_business_need"]);
 });
 
 test("research cost estimate averages earlier completed runs and never triggers anything", () => {

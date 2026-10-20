@@ -60,12 +60,6 @@ export function QualificationPanel({ score }: { score: ProspectScore }) {
           )}
         </div>
       </div>
-      {score.recommended_action && (
-        <div className="rounded-xl bg-ink-900 px-5 py-4 text-sm text-white">
-          <span className="font-medium text-accent-200">Recommended next research: </span>
-          {score.recommended_action}
-        </div>
-      )}
     </section>
   );
 }

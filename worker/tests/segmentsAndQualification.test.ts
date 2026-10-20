@@ -96,7 +96,7 @@ test("a 3-person brand with corroborated evidence of scale stays a probable pros
   assert.deepEqual(new Set(scores.map((s) => s.potentialMax)).size, 1);
 
   assert.equal(scoreProspect(base({ facts: withStaff(4, [catalogue]) })).fitStatus, "needs_qualification");
-  assert.equal(scoreProspect(base({ facts: withStaff(2), signals: [signal({ signalType: "growth_initiative", title: "Opening wholesale" })], screened: true })).fitStatus, "probable_fit");
+  assert.equal(scoreProspect(base({ facts: withStaff(2), signals: [signal({ signalType: "growth_initiative", title: "Opening wholesale" })], screened: true })).fitStatus, "needs_qualification", "a launch without revenue or funding shows activity, not capacity");
 });
 
 test("components still total 100, never score headcount, and count revenue only once", () => {

@@ -1,10 +1,10 @@
 import type { Tone } from '@/components/ui';
-import type { AssessmentLevel, Confidence, DiscoverySegment, FitStatus, ProspectDecisionKind } from '@/lib/prospectTypes';
+import type { AssessmentLevel, Confidence, DiscoverySegment, FitStatus, NextActionKey, OverrideField, ProspectDecisionKind } from '@/lib/prospectTypes';
 import type { Queue, ReviewState } from '@/lib/prospectView';
 
 export const QUEUE_META: Record<Queue, { label: string; tone: Tone; hint: string }> = {
   verified_fit: { label: 'Verified fit', tone: 'success', hint: 'Category, direct selling, country and revenue are independently verified' },
-  probable_fit: { label: 'Probable fit', tone: 'primary', hint: 'Several independent signals, or one strong and directly relevant signal' },
+  probable_fit: { label: 'Probable fit', tone: 'primary', hint: 'Revenue or funding evidence, corroborated independently or by a strong relevant signal' },
   needs_qualification: { label: 'Needs qualification', tone: 'warning', hint: 'Promising or incomplete; more evidence is needed' },
   not_scored: { label: 'Not scored yet', tone: 'neutral', hint: 'Added or discovered, but not yet scored' },
   set_aside: { label: 'Set aside', tone: 'error', hint: 'Rejected by a reviewer, excluded at screening, or not a fit' },
@@ -40,6 +40,16 @@ export const ACTION_META: Record<ProspectDecisionKind, { label: string; prompt: 
   reject: { label: 'Reject', prompt: 'Why is this company not worth pursuing?' },
   reopen: { label: 'Reopen', prompt: 'What changed that makes this worth another look?' },
 };
+
+export const NEXT_ACTION_META: Record<NextActionKey, { label: string; tone: Tone }> = {
+  verify_commercial_capacity: { label: 'Verify commercial capacity', tone: 'warning' },
+  validate_business_need: { label: 'Validate business need', tone: 'accent' },
+  confirm_decision_maker: { label: 'Confirm decision-maker', tone: 'secondary' },
+  investigate_website: { label: 'Investigate website', tone: 'primary' },
+  defer: { label: 'Defer', tone: 'neutral' },
+};
+
+export const OVERRIDE_FIELD_LABELS: Record<OverrideField, string> = { score: 'Score', fit_status: 'Fit status', next_action: 'Next action' };
 
 export const LEVEL_META: Record<AssessmentLevel, { label: string; tone: Tone }> = {
   strong: { label: 'Strong', tone: 'success' },

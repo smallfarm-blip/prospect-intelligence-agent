@@ -47,7 +47,7 @@ test("an uncorroborated provider revenue estimate alone stays needs qualificatio
   const s = scoreProspect(base({ facts: [...probableFacts(), fact("catalog_size", "80", "inferred", { n: 80, source: "ai_screening" })] }));
   assert.equal(s.fitStatus, "probable_fit");
   assert.match(s.fitBasis[0], /2 independent supporting signals/);
-  assert.match(s.recommendedAction, /Verify commercial capacity/);
+  assert.equal(s.nextAction.key, "investigate_website", "unscreened, so a quick screen comes first");
   const revenue = s.components.find((c) => c.key === "commercial")!.items.find((i) => i.key === "revenue_annual_usd")!;
   assert.ok(revenue.evidence < revenue.max, "an estimate earns less than full credit");
 });

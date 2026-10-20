@@ -2,6 +2,8 @@ import type {
   DiscoverySegment,
   FitStatus,
   ImportRow,
+  NextAction,
+  NextActionKey,
   ProspectBoard,
   ProspectDecision,
   ProspectDecisionKind,
@@ -24,6 +26,14 @@ const STATE_OF: Record<ProspectDecisionKind, ReviewState> = {
   request_research: 'research_requested',
 };
 
+export interface EffectiveNextAction {
+  key: NextActionKey;
+  /** What the scoring recommended from the evidence; kept even when a reviewer overrides it. */
+  system: NextAction | null;
+  override: ProspectOverride | null;
+  priority: number;
+}
+
 export interface ProspectView {
   id: string;
   name: string;
@@ -34,6 +44,7 @@ export interface ProspectView {
   scoreOverride: ProspectOverride | null;
   fit: FitStatus | null;
   fitOverride: ProspectOverride | null;
+  nextAction: EffectiveNextAction | null;
   decision: ProspectDecision | null;
   state: ReviewState;
   reopened: boolean;
@@ -78,6 +89,12 @@ export function buildViews(board: ProspectBoard): ProspectView[] {
     const own = [...(overrides.get(id) ?? [])].sort(newestFirst);
     const scoreOverride = own.find((o) => o.field === 'score') ?? null;
     const fitOverride = own.find((o) => o.field === 'fit_status') ?? null;
+    const actionOverride = own.find((o) => o.field === 'next_action') ?? null;
+    const system = score?.qualification?.nextAction ?? null;
+    const actionKey = (actionOverride?.new_value as NextActionKey | undefined) ?? system?.key ?? null;
+    const nextAction: EffectiveNextAction | null = actionKey
+      ? { key: actionKey, system, override: actionOverride, priority: actionKey === 'defer' ? 0 : system?.priority ?? 0 }
+      : null;
     const history = decisions.get(id) ?? [];
     const decision = [...history].sort(newestFirst)[0] ?? null;
     const state = decision ? STATE_OF[decision.decision] : 'open';
@@ -96,6 +113,7 @@ export function buildViews(board: ProspectBoard): ProspectView[] {
       scoreOverride,
       fit,
       fitOverride,
+      nextAction,
       decision,
       state,
       reopened,
@@ -157,22 +175,23 @@ export function queueCounts(views: ProspectView[]): Record<Queue, number> {
 export interface Recommendation {
   view: ProspectView;
   reasons: string[];
-  nextAction: string;
 }
 
 const RECOMMENDABLE: Queue[] = ['verified_fit', 'probable_fit', 'needs_qualification'];
 
+const byInvestigationValue = (a: ProspectView, b: ProspectView) => (b.nextAction?.priority ?? -1) - (a.nextAction?.priority ?? -1) || byScore(a, b);
+
+/** Companies worth investigating next, ranked by investigation value and realistic consulting potential; not outreach-ready leads. */
 export function topRecommendations(views: ProspectView[], limit = 5): Recommendation[] {
   return views
-    .filter((v) => v.score && RECOMMENDABLE.includes(v.queue) && (v.state === 'open' || v.state === 'shortlisted'))
-    .sort(byScore)
+    .filter((v) => v.score && RECOMMENDABLE.includes(v.queue) && (v.state === 'open' || v.state === 'shortlisted') && v.nextAction?.key !== 'defer')
+    .sort(byInvestigationValue)
     .slice(0, limit)
     .map((view) => {
       const s = view.score!;
-      const strong = (s.qualification?.assessments ?? []).filter((a) => a.level === 'strong' && a.strengths[0]).map((a) => `${a.label}: ${a.strengths[0]}`);
-      const reasons = [...(s.qualification?.fitBasis?.slice(0, 1) ?? []), ...s.reasons_to_investigate.slice(0, 2), ...strong].slice(0, 3);
-      const nextAction = s.recommended_action?.trim() || (s.unresolved[0] ? `Resolve: ${s.unresolved[0]}` : 'Review the sources and confirm fit');
-      return { view, reasons, nextAction };
+      const evidence = view.nextAction?.system?.evidence ?? [];
+      const reasons = (evidence.length ? evidence : [...(s.qualification?.fitBasis?.slice(0, 1) ?? []), ...s.reasons_to_investigate]).slice(0, 2);
+      return { view, reasons };
     });
 }
 
@@ -210,6 +229,12 @@ export function scoreOverrideProblem(value: string, current: number | null): str
 export function fitOverrideProblem(value: FitStatus, current: FitStatus | null): string | null {
   if (current === null) return 'This company has not been scored yet';
   if (value === current) return 'That is already the current fit status';
+  return null;
+}
+
+export function nextActionOverrideProblem(value: NextActionKey, current: NextActionKey | null): string | null {
+  if (current === null) return 'This company has no recommended next action yet; rescoring will add one';
+  if (value === current) return 'That is already the current next action';
   return null;
 }
 

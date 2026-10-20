@@ -56,10 +56,24 @@ export interface Assessment {
   unknowns: string[];
 }
 
+export const NEXT_ACTION_KEYS = ['verify_commercial_capacity', 'validate_business_need', 'confirm_decision_maker', 'investigate_website', 'defer'] as const;
+export type NextActionKey = (typeof NEXT_ACTION_KEYS)[number];
+
+export interface NextAction {
+  key: NextActionKey;
+  label: string;
+  explanation: string;
+  step: string;
+  evidence: string[];
+  keyUnknown: string;
+  priority: number;
+}
+
 export interface Qualification {
   assessments: Assessment[];
   tradeOffs: string[];
   fitBasis?: string[];
+  nextAction?: NextAction;
 }
 
 export interface ProspectScore {
@@ -95,10 +109,12 @@ export interface ProspectRow {
   companies: { name: string; canonical_domain: string; category: string | null; geography: string | null } | null;
 }
 
+export type OverrideField = 'score' | 'fit_status' | 'next_action';
+
 export interface ProspectOverride {
   id: string;
   company_id: string;
-  field: 'score' | 'fit_status';
+  field: OverrideField;
   previous_value: string | null;
   new_value: string;
   reason: string;

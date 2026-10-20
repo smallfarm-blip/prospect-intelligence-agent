@@ -12,6 +12,7 @@ import { QualificationPanel } from '@/components/prospects/QualificationPanel';
 import { EvidenceTabs, Ext } from '@/components/prospects/EvidenceTabs';
 import { ExistingResearch, HistoryPanel } from '@/components/prospects/HistoryPanel';
 import { ReviewActions } from '@/components/prospects/ReviewActions';
+import { NextActionPanel } from '@/components/prospects/NextActionPanel';
 
 interface Props {
   view: ProspectView;
@@ -65,6 +66,7 @@ export function ProspectDetailPage({ view, board, onBack, onChanged, onOpenResea
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
         <div className="min-w-0 space-y-6">
+          <NextActionPanel view={view} onChanged={onChanged} />
           <ScorePanel view={view} />
           {view.score && <QualificationPanel score={view.score} />}
           {state.status === 'loading' && <Spinner label="Loading sources, people and signals..." />}

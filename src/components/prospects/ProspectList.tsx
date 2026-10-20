@@ -2,6 +2,7 @@ import { ChevronRight, SearchX } from 'lucide-react';
 import type { ProspectView } from '@/lib/prospectView';
 import { ConfidenceCoverage, ProspectBadges, ScoreRange } from '@/components/prospects/ScoreBits';
 import { ORIGIN_LABELS } from '@/components/prospects/labels';
+import { NextActionBadge } from '@/components/prospects/NextActionPanel';
 import { humanize } from '@/lib/format';
 
 export function ProspectList({ views, onOpen, total }: { views: ProspectView[]; onOpen: (id: string) => void; total: number }) {
@@ -27,6 +28,12 @@ export function ProspectList({ views, onOpen, total }: { views: ProspectView[]; 
               <p className="line-clamp-1 text-sm text-ink-500">
                 {v.prospect.excluded_reason ?? v.prospect.description ?? v.prospect.companies?.category ?? ORIGIN_LABELS[v.prospect.origin] ?? humanize(v.prospect.origin)}
               </p>
+              {v.nextAction && (
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-ink-500">
+                  <NextActionBadge actionKey={v.nextAction.key} overridden={!!v.nextAction.override} />
+                  {v.nextAction.system?.keyUnknown && <span className="line-clamp-1 min-w-0 flex-1">Key unknown: {v.nextAction.system.keyUnknown}</span>}
+                </div>
+              )}
             </div>
             <div className="space-y-1.5">
               <ScoreRange view={v} />

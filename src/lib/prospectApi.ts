@@ -4,6 +4,7 @@ import type {
   FactAttribute,
   ImportResult,
   ImportRow,
+  OverrideField,
   ProspectBoard,
   ProspectDecision,
   ProspectDecisionKind,
@@ -69,7 +70,7 @@ export async function loadProspectDetail(companyId: string): Promise<ProspectDet
 }
 
 /** previous_value and reviewer_id are filled in by the database. */
-export async function submitProspectOverride(input: { companyId: string; field: 'score' | 'fit_status'; newValue: string; reason: string }): Promise<ProspectOverride> {
+export async function submitProspectOverride(input: { companyId: string; field: OverrideField; newValue: string; reason: string }): Promise<ProspectOverride> {
   return saved(
     await supabase.from('prospect_overrides').insert({ company_id: input.companyId, field: input.field, new_value: input.newValue, reason: input.reason.trim() }).select('*').single(),
     'change',
